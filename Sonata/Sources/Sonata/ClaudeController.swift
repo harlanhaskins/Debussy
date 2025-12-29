@@ -70,7 +70,11 @@ final class ClaudeController {
         return systemPrompt
     }
 
-    private func makeTools(workingDirectory: URL, locationController: LocationController) -> Tools {
+    private func makeTools(
+        workingDirectory: URL,
+        locationController: LocationController,
+        subAgentCallback: @escaping SubAgentTool.OutputCallback
+    ) -> Tools {
         Tools {
             ReadTool()
             WriteTool()
@@ -84,7 +88,7 @@ final class ClaudeController {
             WebCanvasTool(workingDirectory: workingDirectory)
             UserLocationTool(locationController: locationController)
             MapSearchTool(locationController: locationController)
-            SubAgentTool(apiKey: apiKey)
+            SubAgentTool(apiKey: apiKey, outputCallback: subAgentCallback)
         }
     }
 
@@ -117,7 +121,26 @@ final class ClaudeController {
 
         let systemPrompt = makeSystemPrompt(filesDir: filesDir)
         let locationController = LocationController()
-        let tools = makeTools(workingDirectory: filesDir, locationController: locationController)
+
+        // Create a holder for the conversation reference (will be set after conversation is created)
+        final class ConversationHolder: @unchecked Sendable {
+            var conversation: Conversation?
+        }
+        let holder = ConversationHolder()
+
+        // Create SubAgent callback that will update the conversation's tool executions
+        let subAgentCallback: @Sendable (SubAgentOutput) -> Void = { output in
+            guard case .toolCall(let toolName, let summary) = output.event else { return }
+            Task { @MainActor in
+                holder.conversation?.handleSubAgentToolCall(taskId: output.taskId, toolName: toolName, summary: summary)
+            }
+        }
+
+        let tools = makeTools(
+            workingDirectory: filesDir,
+            locationController: locationController,
+            subAgentCallback: subAgentCallback
+        )
         let client = try! await makeClaudeClient(systemPrompt: systemPrompt, filesDir: filesDir, tools: tools)
 
         // Setup location permission hooks
@@ -125,6 +148,7 @@ final class ClaudeController {
         await setupMapSearchPermissionHook(client: client, locationController: locationController)
 
         let conversation = await Conversation(client: client, id: conversationId)
+        holder.conversation = conversation
         conversations.insert(conversation, at: 0)
         return conversation
     }
@@ -191,10 +215,30 @@ final class ClaudeController {
 
                 let systemPrompt = makeSystemPrompt(filesDir: filesDir)
                 let locationController = LocationController()
-                let tools = makeTools(workingDirectory: filesDir, locationController: locationController)
+
+                // Create a holder for the conversation reference
+                final class ConversationHolder: @unchecked Sendable {
+                    var conversation: Conversation?
+                }
+                let holder = ConversationHolder()
+
+                // Create SubAgent callback
+                let subAgentCallback: @Sendable (SubAgentOutput) -> Void = { output in
+                    guard case .toolCall(let toolName, let summary) = output.event else { return }
+                    Task { @MainActor in
+                        holder.conversation?.handleSubAgentToolCall(taskId: output.taskId, toolName: toolName, summary: summary)
+                    }
+                }
+
+                let tools = makeTools(
+                    workingDirectory: filesDir,
+                    locationController: locationController,
+                    subAgentCallback: subAgentCallback
+                )
                 let client = try await makeClaudeClient(systemPrompt: systemPrompt, filesDir: filesDir, tools: tools)
 
                 let conversation = await Conversation(client: client, id: metadata.id)
+                holder.conversation = conversation
 
                 let sessionData = try Data(contentsOf: sessionURL)
                 try await conversation.client.importSession(from: sessionData)

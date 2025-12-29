@@ -209,74 +209,10 @@ public struct ContentView: View {
     public init() {}
 
     public var body: some View {
-        NavigationSplitView(preferredCompactColumn: .constant(.detail)) {
-            if let controller {
-                List(controller.conversations, selection: $selectedConversation) { conversation in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(conversation.title)
-                            .lineLimit(1)
-                        Text(conversation.lastMessageTimestamp, style: .date)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            conversationToDelete = conversation.id
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    }
-                }
-                .toolbarTitleDisplayMode(.inlineLarge)
-                .safeAreaBar(edge: .bottom) {
-                    Button {
-                        Task {
-                            let conv = await controller.createConversation()
-                            withAnimation {
-                                selectedConversation = conv.id
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "plus")
-                            .imageScale(.large)
-                    }
-                    .buttonStyle(.glass)
-                    .tint(.claudeOrange)
-                    .buttonBorderShape(.circle)
-                    .padding(8)
-                }
-                .toolbar {
-                    ToolbarItem(placement: .automatic) {
-                        Button {
-                            showingSettings = true
-                        } label: {
-                            Image(systemName: "gearshape.fill")
-                        }
-                    }
-                }
-                #if os(iOS)
-                .containerBackground(
-                    colorScheme == .dark ? Color.darkBackground : Color.lightBackground,
-                    for: .navigation
-                )
-                #endif
-            } else {
-                ProgressView()
-            }
+        NavigationSplitView {
+            conversationList
         } detail: {
-            ZStack {
-                if let controller, let selectedConversation, let conversation = controller.conversations.first(where: { $0.id == selectedConversation }) {
-                    ConversationView(conversation: conversation)
-                }
-            }
-            .navigationTitle(Text("Claude"))
-            #if os(iOS)
-            .containerBackground(
-                colorScheme == .dark ? Color.darkBackground : Color.lightBackground,
-                for: .navigation
-            )
-            #endif
-            .toolbarTitleDisplayMode(.inlineLarge)
+            conversationDetail
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView(
@@ -314,6 +250,88 @@ public struct ContentView: View {
             }
         } message: {
             Text("This will permanently delete the conversation and all its files.")
+        }
+    }
+
+    @ViewBuilder
+    private var conversationList: some View {
+        if let controller {
+            List(controller.conversations, selection: $selectedConversation) { conversation in
+                NavigationLink(value: conversation.id) {
+                    conversationRow(for: conversation)
+                }
+            }
+            .navigationTitle("Conversations")
+            .toolbarTitleDisplayMode(.inlineLarge)
+            .safeAreaBar(edge: .bottom) {
+                Button {
+                    Task {
+                        let conv = await controller.createConversation()
+                        withAnimation {
+                            selectedConversation = conv.id
+                        }
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .imageScale(.large)
+                }
+                .buttonStyle(.glass)
+                .tint(.claudeOrange)
+                .buttonBorderShape(.circle)
+                .padding(8)
+            }
+            .toolbar {
+                ToolbarItem(placement: .automatic) {
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape.fill")
+                    }
+                }
+            }
+            #if os(iOS)
+            .containerBackground(
+                colorScheme == .dark ? Color.darkBackground : Color.lightBackground,
+                for: .navigation
+            )
+            #endif
+        } else {
+            ProgressView()
+        }
+    }
+
+    @ViewBuilder
+    private var conversationDetail: some View {
+        if let controller, let selectedConversation, let conversation = controller.conversations.first(where: { $0.id == selectedConversation }) {
+            NavigationStack {
+                ConversationView(conversation: conversation)
+                    .navigationTitle("Claude")
+                    #if os(iOS)
+                    .containerBackground(
+                        colorScheme == .dark ? Color.darkBackground : Color.lightBackground,
+                        for: .navigation
+                    )
+                    #endif
+                    .toolbarTitleDisplayMode(.inlineLarge)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func conversationRow(for conversation: Conversation) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(conversation.title)
+                .lineLimit(1)
+            Text(conversation.lastMessageTimestamp, style: .date)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                conversationToDelete = conversation.id
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
         }
     }
 

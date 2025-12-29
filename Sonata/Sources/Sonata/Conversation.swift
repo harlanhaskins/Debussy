@@ -27,6 +27,9 @@ final class Conversation: Identifiable {
     var toolExecutions: [String: ToolExecution] = [:]
     private let encoder = JSONEncoder()
 
+    // Session for managing active tool executions
+    private let executionSession = ToolExecutionSession()
+
     /// Title for the conversation based on the first user message
     var title: String {
         guard let firstUserMessage = messages.values.first(where: { $0.kind == .user }) else {
@@ -80,6 +83,16 @@ final class Conversation: Identifiable {
             )
             toolExecutions[context.toolUseId] = execution
         }
+
+        // For SubAgent: create sub-execution session and register task mappings
+        if context.toolName == "SubAgent",
+           let input = context.input as? SubAgentToolInput,
+           let execution = toolExecutions[context.toolUseId] {
+            execution.subExecutionSession = ToolExecutionSession()
+
+            let taskIds = input.tasks.enumerated().map { index, _ in "task-\(index)" }
+            executionSession.registerSubAgentExecution(parentId: context.toolUseId, taskIds: taskIds)
+        }
     }
 
     private func handleAfterToolExecution(_ context: AfterToolExecutionContext) async {
@@ -94,7 +107,46 @@ final class Conversation: Identifiable {
             execution.decodedOutput = context.output
         }
 
+        // For SubAgent: finalize sub-executions from batch result
+        if execution.name == "SubAgent", let batchResult = context.output as? SubAgentBatchResult {
+            var subExecutions: [ToolExecution] = []
+
+            for result in batchResult.results {
+                for toolCall in result.toolCalls {
+                    let subExecution = ToolExecution(
+                        id: toolCall.id,
+                        name: toolCall.toolName,
+                        input: toolCall.summary,
+                        decodedInput: nil,
+                        decodedOutput: nil,
+                        metadata: [:]
+                    )
+                    subExecution.isComplete = true
+                    subExecutions.append(subExecution)
+                }
+            }
+
+            // Replace live executions with final complete list
+            execution.subExecutionSession?.replace(with: subExecutions)
+        }
+
+        // For SubAgent: clean up task ID mappings
+        if context.toolName == "SubAgent" {
+            executionSession.cleanupSubAgentExecution(parentId: context.toolUseId)
+        }
+
         try? await saveSession()
+    }
+
+    // Handle live sub-tool updates from SubAgent
+    func handleSubAgentToolCall(taskId: String, toolName: String, summary: String) {
+        guard let parentExecutionId = executionSession.parentExecutionId(forSubAgentTask: taskId),
+              let execution = toolExecutions[parentExecutionId],
+              let session = execution.subExecutionSession else {
+            return
+        }
+
+        session.addSubToolExecution(id: UUID().uuidString, name: toolName, input: summary)
     }
 
     // MARK: - Messaging
@@ -263,6 +315,31 @@ final class Conversation: Identifiable {
             execution.output = persisted.output
             execution.isError = persisted.isError
             execution.isComplete = true
+
+            // For SubAgent: extract tool calls and populate subToolExecutions
+            if persisted.name == "SubAgent", let batchResult = decodedOutput as? SubAgentBatchResult {
+                let session = ToolExecutionSession()
+                var subExecutions: [ToolExecution] = []
+
+                for result in batchResult.results {
+                    for toolCall in result.toolCalls {
+                        let subExecution = ToolExecution(
+                            id: toolCall.id,
+                            name: toolCall.toolName,
+                            input: toolCall.summary,
+                            decodedInput: nil,
+                            decodedOutput: nil,
+                            metadata: [:]
+                        )
+                        subExecution.isComplete = true
+                        subExecutions.append(subExecution)
+                    }
+                }
+
+                session.replace(with: subExecutions)
+                execution.subExecutionSession = session
+            }
+
             toolExecutions[id] = execution
         }
     }

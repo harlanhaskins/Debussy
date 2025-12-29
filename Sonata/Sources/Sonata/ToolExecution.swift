@@ -22,6 +22,14 @@ class ToolExecution: Identifiable {
     var isComplete: Bool = false
     var metadata: [String: String] = [:] // Additional metadata (e.g., MCP server name)
 
+    // For tools with sub-executions (like SubAgent) - uses the same session type
+    var subExecutionSession: ToolExecutionSession?
+
+    // Computed property for accessing sub-executions
+    var subToolExecutions: [ToolExecution] {
+        subExecutionSession?.executions ?? []
+    }
+
     init(
         id: String,
         name: String,

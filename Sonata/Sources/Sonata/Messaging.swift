@@ -76,7 +76,6 @@ struct MessageView: View {
 
 struct ToolUseCard: View {
     @Bindable var execution: ToolExecution
-    @State private var showingDetail = false
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.displayScale) var displayScale
 
@@ -89,56 +88,104 @@ struct ToolUseCard: View {
         return lines.suffix(4).joined(separator: "\n")
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Tool name and input
-            HStack {
-                Text(execution.name)
-                    .font(.headline)
-                    .fontDesign(.monospaced)
-                if !execution.input.isEmpty {
-                    Text("·")
-                        .foregroundStyle(.secondary)
-                    Text(execution.input)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                if !execution.isComplete {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                }
-            }
+    var recentSubToolCalls: [ToolExecution] {
+        Array(execution.subToolExecutions.suffix(3))
+    }
 
-            // Output preview (last 4 lines)
-            if execution.isComplete {
-                Text(lastFourLines.isEmpty ? "(no output)" : lastFourLines)
-                    .font(.caption)
-                    .fontDesign(.monospaced)
-                    .foregroundStyle(execution.isError ? .red : .secondary)
-                    .lineLimit(4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Text("Running...")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .italic()
+    var filePath: String? {
+        if let fileInput = execution.decodedInput as? FileToolInput {
+            return fileInput.filePath
+        }
+        if let canvasOutput = execution.decodedOutput as? WebCanvasOutput {
+            return canvasOutput.filePath
+        }
+        return nil
+    }
+
+    var body: some View {
+        NavigationLink {
+            ToolExecutionDetailView(execution: execution)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                // Tool name and input
+                HStack {
+                    Text(execution.name)
+                        .font(.headline)
+                        .fontDesign(.monospaced)
+                    if !execution.input.isEmpty {
+                        Text("·")
+                            .foregroundStyle(.secondary)
+                        Text(execution.input)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    if !execution.isComplete {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    }
+
+                    // File tool menu
+                    if let filePath = filePath {
+                        FileToolMenu(filePath: filePath)
+                    }
+                }
+
+                // For SubAgent: show recent tool calls
+                if execution.name == "SubAgent" && !execution.subToolExecutions.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(recentSubToolCalls) { subExecution in
+                            HStack(spacing: 4) {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                Text(subExecution.name)
+                                    .font(.caption)
+                                    .fontDesign(.monospaced)
+                                    .fontWeight(.medium)
+                                Text("·")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                                Text(subExecution.input)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        if !execution.isComplete {
+                            Text("Running...")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .italic()
+                        }
+                    }
+                } else {
+                    // Output preview (last 4 lines) for non-SubAgent tools
+                    if execution.isComplete {
+                        Text(lastFourLines.isEmpty ? "(no output)" : lastFourLines)
+                            .font(.caption)
+                            .fontDesign(.monospaced)
+                            .foregroundStyle(execution.isError ? .red : .secondary)
+                            .lineLimit(4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("Running...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .italic()
+                    }
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity)
+            .background(Color.secondary.opacity(0.1), in: .rect(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity)
-        .background(Color.secondary.opacity(0.1), in: .rect(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
-        }
-        .onTapGesture {
-            showingDetail = true
-        }
-        .sheet(isPresented: $showingDetail) {
-            ToolExecutionDetailView(execution: execution)
-        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -146,45 +193,38 @@ struct ToolUseCard: View {
 
 struct ToolExecutionDetailView: View {
     var execution: ToolExecution
-    @Environment(\.dismiss) var dismiss
 
     var navigationTitle: String {
         switch execution.name {
         case JavaScriptTool.name: return "JavaScript"
         case WebCanvasTool.name: return "WebCanvas"
+        case SubAgentTool.name: return "SubAgent"
         case FetchTool.name: return "Fetch"
         default: return execution.name
         }
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    switch execution.name {
-                    case JavaScriptTool.name:
-                        JavaScriptExecutionDetailContent(execution: execution)
-                    case WebCanvasTool.name:
-                        WebCanvasExecutionDetailContent(execution: execution)
-                    case ReadTool.name, WriteTool.name, UpdateTool.name:
-                        FileToolExecutionDetailContent(execution: execution)
-                    case FetchTool.name:
-                        FetchExecutionDetailContent(execution: execution)
-                    default:
-                        GenericToolExecutionDetailContent(execution: execution)
-                    }
-                }
-                .padding()
-            }
-            .navigationTitle(navigationTitle)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        dismiss()
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                switch execution.name {
+                case JavaScriptTool.name:
+                    JavaScriptExecutionDetailContent(execution: execution)
+                case WebCanvasTool.name:
+                    WebCanvasExecutionDetailContent(execution: execution)
+                case SubAgentTool.name:
+                    SubAgentExecutionDetailContent(execution: execution)
+                case ReadTool.name, WriteTool.name, UpdateTool.name:
+                    FileToolExecutionDetailContent(execution: execution)
+                case FetchTool.name:
+                    FetchExecutionDetailContent(execution: execution)
+                default:
+                    GenericToolExecutionDetailContent(execution: execution)
                 }
             }
+            .padding()
         }
+        .navigationTitle(navigationTitle)
     }
 }
 
@@ -199,13 +239,13 @@ struct JavaScriptExecutionDetailContent: View {
         Group {
             // Code section
             if let code = decodedInput?.code {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Code")
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Code", systemImage: "chevron.left.forwardslash.chevron.right")
                         .font(.headline)
-                    Text(code)
-                        .font(.body)
-                        .fontDesign(.monospaced)
-                        .textSelection(.enabled)
+
+                    let markdown = "```javascript\n\(code)\n```"
+                    StructuredText(markdown: markdown)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
 
@@ -329,6 +369,103 @@ struct WebCanvasExecutionDetailContent: View {
                         .foregroundStyle(execution.isError ? .red : .primary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+}
+
+struct SubAgentExecutionDetailContent: View {
+    var execution: ToolExecution
+
+    var decodedOutput: SubAgentBatchResult? {
+        execution.decodedOutput as? SubAgentBatchResult
+    }
+
+    var body: some View {
+        Group {
+            // Summary section
+            if !execution.output.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Summary", systemImage: "text.alignleft")
+                        .font(.headline)
+
+                    StructuredText(markdown: execution.output)
+                }
+            }
+
+            // Tool calls section (from live execution tracking)
+            if !execution.subToolExecutions.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label("Sub-Tool Calls", systemImage: "wrench.and.screwdriver")
+                            .font(.headline)
+                        Spacer()
+                        Text("\(execution.subToolExecutions.count) calls")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    LazyVStack(spacing: 8) {
+                        ForEach(execution.subToolExecutions) { subExecution in
+                            ToolUseCard(execution: subExecution)
+                        }
+                    }
+                }
+            } else if let batchResult = decodedOutput, !batchResult.results.isEmpty {
+                // Fallback to batch result if no live executions (for restored sessions)
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Sub-Agent Tool Calls", systemImage: "wrench.and.screwdriver")
+                        .font(.headline)
+
+                    LazyVStack(spacing: 12) {
+                        ForEach(batchResult.results) { result in
+                            VStack(alignment: .leading, spacing: 8) {
+                                // Task header
+                                HStack {
+                                    Text(result.description)
+                                        .font(.subheadline)
+                                        .fontWeight(.semibold)
+                                    Spacer()
+                                    Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                        .foregroundStyle(result.success ? .green : .red)
+                                }
+
+                                // Stats
+                                HStack(spacing: 16) {
+                                    Label("\(result.turnCount) turns", systemImage: "arrow.triangle.2.circlepath")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    Label("\(result.toolCallCount) tools", systemImage: "wrench.adjustable")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                // Tool calls
+                                if !result.toolCalls.isEmpty {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        ForEach(result.toolCalls) { toolCall in
+                                            HStack {
+                                                Image(systemName: "chevron.right")
+                                                    .font(.caption)
+                                                    .foregroundStyle(.tertiary)
+                                                Text(toolCall.toolName)
+                                                    .font(.caption.monospaced())
+                                                    .fontWeight(.medium)
+                                                Text("• \(toolCall.summary)")
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                                Spacer()
+                                            }
+                                        }
+                                    }
+                                    .padding(.leading, 8)
+                                }
+                            }
+                            .padding()
+                            .background(Color.secondary.opacity(0.1), in: .rect(cornerRadius: 8))
+                        }
+                    }
                 }
             }
         }
@@ -667,24 +804,15 @@ struct WebCanvasFullScreenView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            if let path = filePath {
-                let url = URL(filePath: path)
-                WebView(url: url)
-                    .aspectRatio(aspectRatio, contentMode: .fit)
-                    .navigationTitle("WebCanvas")
-                    .toolbarTitleDisplayMode(.inlineLarge)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") {
-                                dismiss()
-                            }
-                        }
-                    }
-            } else {
-                Text("Failed to load canvas")
-                    .foregroundStyle(.secondary)
-            }
+        if let path = filePath {
+            let url = URL(filePath: path)
+            WebView(url: url)
+                .aspectRatio(aspectRatio, contentMode: .fit)
+                .navigationTitle("WebCanvas")
+                .toolbarTitleDisplayMode(.inlineLarge)
+        } else {
+            Text("Failed to load canvas")
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -809,17 +937,99 @@ struct MapSearchFullScreenView: View {
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
-        NavigationStack {
-            MapSearchMapView(results: results)
-                .navigationTitle("Map Results")
-                .toolbarTitleDisplayMode(.inlineLarge)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") {
-                            dismiss()
-                        }
-                    }
+        MapSearchMapView(results: results)
+            .navigationTitle("Map Results")
+            .toolbarTitleDisplayMode(.inlineLarge)
+    }
+}
+
+// MARK: - File Tool Menu
+
+struct FileToolMenu: View {
+    let filePath: String
+    @State private var fileContents: String = ""
+    @State private var isLoadingFile = false
+
+    var fileURL: URL {
+        URL(fileURLWithPath: filePath)
+    }
+
+    var body: some View {
+        Menu {
+            NavigationLink {
+                FileViewerView(filePath: filePath)
+            } label: {
+                Label("View File", systemImage: "doc.text")
+            }
+
+            Button {
+                #if os(macOS)
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(filePath, forType: .url)
+                #else
+                UIPasteboard.general.url = URL(filePath: filePath)
+                #endif
+            } label: {
+                Label("Copy Path", systemImage: "doc.on.doc")
+            }
+
+            ShareLink(item: fileURL) {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+                .background(Color.secondary.opacity(0.15), in: .circle)
+        }
+        .buttonStyle(.plain)
+        .buttonBorderShape(.circle)
+    }
+}
+
+// MARK: - File Viewer
+
+struct FileViewerView: View {
+    let filePath: String
+    @State private var fileContents: String = ""
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView("Loading file...")
+            } else if let error = errorMessage {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                    Text(error)
+                        .foregroundStyle(.secondary)
                 }
+            } else {
+                TextEditor(text: .constant(fileContents))
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .disabled(true)
+            }
+        }
+        .navigationTitle(URL(fileURLWithPath: filePath).lastPathComponent)
+        .task {
+            await loadFile()
+        }
+    }
+
+    private func loadFile() async {
+        do {
+            let contents = try String(contentsOfFile: filePath, encoding: .utf8)
+            fileContents = contents
+            isLoading = false
+        } catch {
+            errorMessage = "Failed to load file: \(error.localizedDescription)"
+            isLoading = false
         }
     }
 }
