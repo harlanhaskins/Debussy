@@ -16,16 +16,18 @@ class ToolExecution: Identifiable {
     let name: String
     var input: String
     var inputData: Data? // Raw JSON input for the tool
+    var decodedInput: Any? // Decoded tool input (type-erased)
     var output: String = ""
     var isError: Bool = false
     var isComplete: Bool = false
     var metadata: [String: String] = [:] // Additional metadata (e.g., MCP server name)
 
-    init(id: String, name: String, input: String, inputData: Data? = nil, metadata: [String: String] = [:]) {
+    init(id: String, name: String, input: String, inputData: Data? = nil, decodedInput: Any? = nil, metadata: [String: String] = [:]) {
         self.id = id
         self.name = name
         self.input = input
         self.inputData = inputData
+        self.decodedInput = decodedInput
         self.metadata = metadata
     }
 }

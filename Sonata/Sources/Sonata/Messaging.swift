@@ -187,13 +187,15 @@ struct ToolExecutionDetailView: View {
 
 struct JavaScriptExecutionDetailContent: View {
     var execution: ToolExecution
-    @State private var code: String?
-    @State private var input: String?
+
+    var decodedInput: JavaScriptToolInput? {
+        execution.decodedInput as? JavaScriptToolInput
+    }
 
     var body: some View {
         Group {
             // Code section
-            if let code = code {
+            if let code = decodedInput?.code {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Code")
                         .font(.headline)
@@ -205,7 +207,7 @@ struct JavaScriptExecutionDetailContent: View {
             }
 
             // Input JSON section
-            if let input = input {
+            if let input = decodedInput?.input {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Input JSON")
                         .font(.headline)
@@ -240,30 +242,20 @@ struct JavaScriptExecutionDetailContent: View {
                 }
             }
         }
-        .onAppear {
-            guard let inputData = execution.inputData else { return }
-            do {
-                let decoder = JSONDecoder()
-                let decoded = try decoder.decode(JavaScriptToolInput.self, from: inputData)
-                code = decoded.code
-                input = decoded.input
-            } catch {
-                code = "Error decoding input: \(error.localizedDescription)"
-            }
-        }
     }
 }
 
 struct WebCanvasExecutionDetailContent: View {
     var execution: ToolExecution
-    @State private var html: String?
-    @State private var aspectRatio: String?
-    @State private var input: String?
+
+    var decodedInput: WebCanvasToolInput? {
+        execution.decodedInput as? WebCanvasToolInput
+    }
 
     var body: some View {
         Group {
             // Aspect ratio
-            if let aspectRatio = aspectRatio {
+            if let aspectRatio = decodedInput?.aspectRatio ?? "1:1" as String? {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Aspect Ratio")
                         .font(.headline)
@@ -274,7 +266,7 @@ struct WebCanvasExecutionDetailContent: View {
             }
 
             // HTML content
-            if let html = html {
+            if let html = decodedInput?.html {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("HTML")
                         .font(.headline)
@@ -286,7 +278,7 @@ struct WebCanvasExecutionDetailContent: View {
             }
 
             // Input JSON section
-            if let input = input {
+            if let input = decodedInput?.input {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Input JSON")
                         .font(.headline)
@@ -335,18 +327,6 @@ struct WebCanvasExecutionDetailContent: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
-        }
-        .onAppear {
-            guard let inputData = execution.inputData else { return }
-            do {
-                let decoder = JSONDecoder()
-                let decoded = try decoder.decode(WebCanvasToolInput.self, from: inputData)
-                html = decoded.html
-                aspectRatio = decoded.aspectRatio ?? "1:1"
-                input = decoded.input
-            } catch {
-                html = "Error decoding input: \(error.localizedDescription)"
             }
         }
     }
@@ -417,7 +397,7 @@ struct FileToolExecutionDetailContent: View {
 
             let extractedPath = await client.extractFilePath(
                 toolName: execution.name,
-                input: ToolInput(data: inputData)
+                input: RawToolInput(data: inputData)
             )
             filePath = extractedPath
 
@@ -435,12 +415,15 @@ struct FileToolExecutionDetailContent: View {
 
 struct FetchExecutionDetailContent: View {
     var execution: ToolExecution
-    @State private var url: String?
+
+    var decodedInput: FetchToolInput? {
+        execution.decodedInput as? FetchToolInput
+    }
 
     var body: some View {
         Group {
             // URL
-            if let url = url {
+            if let url = decodedInput?.url {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("URL")
                         .font(.headline)
@@ -472,16 +455,6 @@ struct FetchExecutionDetailContent: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
-        }
-        .onAppear {
-            guard let inputData = execution.inputData else { return }
-            do {
-                let decoder = JSONDecoder()
-                let decoded = try decoder.decode(FetchToolInput.self, from: inputData)
-                url = decoded.url
-            } catch {
-                url = "Error decoding input: \(error.localizedDescription)"
             }
         }
     }

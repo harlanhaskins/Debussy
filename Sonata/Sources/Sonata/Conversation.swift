@@ -45,24 +45,26 @@ final class Conversation: Identifiable {
 
     private func setupHooks() async {
         // Register hook for tool execution start
-        await client.addHook(.beforeToolExecution) { [weak self] (context: BeforeToolExecutionContext) async throws -> Void in
+        await client.addHook(.beforeToolExecution) { [weak self] (context: BeforeToolExecutionContext) async in
             await self?.handleBeforeToolExecution(context)
         }
 
-        await client.addHook(.afterToolExecution) { [weak self] (context: AfterToolExecutionContext) async throws -> Void in
+        await client.addHook(.afterToolExecution) { [weak self] (context: AfterToolExecutionContext) async in
             await self?.handleAfterToolExecution(context)
         }
     }
 
     private func handleBeforeToolExecution(_ context: BeforeToolExecutionContext) async {
-        let toolInput = ToolInput(data: context.input)
+        let toolInput = RawToolInput(data: context.input)
         let summary = await client.formatToolCallSummary(toolName: context.toolName, input: toolInput)
         let metadata = await client.getToolMetadata(toolName: context.toolName)
+        let decodedInput = await client.decodeToolInput(toolName: context.toolName, inputData: context.input)
 
         // Update existing execution or create new one
         if let execution = toolExecutions[context.toolUseId] {
             execution.input = summary
             execution.inputData = context.input
+            execution.decodedInput = decodedInput
             execution.metadata = metadata
         } else {
             let execution = ToolExecution(
@@ -70,6 +72,7 @@ final class Conversation: Identifiable {
                 name: context.toolName,
                 input: summary,
                 inputData: context.input,
+                decodedInput: decodedInput,
                 metadata: metadata
             )
             toolExecutions[context.toolUseId] = execution
@@ -113,7 +116,7 @@ final class Conversation: Identifiable {
                                     id: toolBlock.id,
                                     name: toolBlock.name,
                                     input: "", // Will be filled by hook
-                                    inputData: toolBlock.input.toData()
+                                    inputData: toolBlock.input.data
                                 )
                             }
 
@@ -308,7 +311,7 @@ final class Conversation: Identifiable {
                                 id: toolBlock.id,
                                 name: toolBlock.name,
                                 input: "", // Will be empty if not persisted
-                                inputData: toolBlock.input.toData()
+                                inputData: toolBlock.input.data
                             )
                             newExecution.isComplete = true
                             toolExecutions[toolBlock.id] = newExecution
