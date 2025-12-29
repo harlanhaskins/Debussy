@@ -11,6 +11,7 @@ import SwiftUI
 import Textual
 import UniformTypeIdentifiers
 import WebKit
+@preconcurrency import MapKit
 
 #if canImport(UIKit)
 import UIKit
@@ -62,6 +63,8 @@ struct MessageView: View {
                 case .toolExecution(let execution):
                     if execution.name == "WebCanvas", execution.isComplete, !execution.isError {
                         WebCanvasView(execution: execution)
+                    } else if execution.name == "MapSearch", execution.isComplete, !execution.isError, execution.decodedOutput != nil {
+                        MapSearchView(execution: execution)
                     } else {
                         ToolUseCard(execution: execution)
                     }
@@ -339,12 +342,7 @@ struct FileToolExecutionDetailContent: View {
     @State private var fileContents: String?
 
     var outputLabel: String {
-        switch execution.name {
-        case "Read": return "File Contents"
-        case "Write": return "Written Content"
-        case "Update": return "Updated Content"
-        default: return "File Contents"
-        }
+        execution.name == "Read" ? "File Contents" : "Output"
     }
 
     var body: some View {
@@ -392,22 +390,15 @@ struct FileToolExecutionDetailContent: View {
             }
         }
         .task {
-            guard let client = client,
-                  let inputData = execution.inputData else { return }
+            guard let input = execution.decodedInput as? FileToolInput else { return }
 
-            let extractedPath = await client.extractFilePath(
-                toolName: execution.name,
-                input: RawToolInput(data: inputData)
-            )
-            filePath = extractedPath
+            filePath = input.filePath
 
-            if let extractedPath = extractedPath {
-                do {
-                    let contents = try String(contentsOfFile: extractedPath, encoding: .utf8)
-                    fileContents = contents
-                } catch {
-                    fileContents = "Error reading file: \(error.localizedDescription)"
-                }
+            do {
+                let contents = try String(contentsOfFile: input.filePath, encoding: .utf8)
+                fileContents = contents
+            } catch {
+                fileContents = "Error reading file: \(error.localizedDescription)"
             }
         }
     }
@@ -694,6 +685,141 @@ struct WebCanvasFullScreenView: View {
                 Text("Failed to load canvas")
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+// MARK: - Map Search View
+
+struct MapSearchView: View {
+    let execution: ToolExecution
+    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.displayScale) var displayScale
+    @State private var showingFullScreen = false
+
+    var borderColor: Color {
+        colorScheme == .dark ? .darkBorder : .lightBorder
+    }
+
+    var results: [MapSearchResult]? {
+        guard let output = execution.decodedOutput as? MapSearchToolOutput else {
+            return nil
+        }
+        return output.results
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Title bar
+            HStack {
+                Text("MapSearch")
+                    .font(.headline)
+                    .fontDesign(.monospaced)
+                Spacer()
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .background(Color.secondary.opacity(0.05))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                showingFullScreen = true
+            }
+
+            Divider()
+
+            // Map preview
+            if let results = results, !results.isEmpty {
+                MapSearchMapView(results: results)
+                    .aspectRatio(6/4, contentMode: .fit)
+                    .frame(maxWidth: 600, maxHeight: 400)
+            } else {
+                Text("No results to display")
+                    .foregroundStyle(.secondary)
+                    .padding()
+            }
+        }
+        .background(Color.secondary.opacity(0.1), in: .rect(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
+        }
+        .sheet(isPresented: $showingFullScreen) {
+            if let results = results {
+                MapSearchFullScreenView(results: results)
+            }
+        }
+    }
+}
+
+struct MapSearchMapView: View {
+    let results: [MapSearchResult]
+    @State private var region: MKCoordinateRegion
+
+    init(results: [MapSearchResult]) {
+        self.results = results
+
+        // Calculate region that fits all results
+        let coordinates = results.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+
+        if let first = coordinates.first {
+            var minLat = first.latitude
+            var maxLat = first.latitude
+            var minLon = first.longitude
+            var maxLon = first.longitude
+
+            for coord in coordinates {
+                minLat = min(minLat, coord.latitude)
+                maxLat = max(maxLat, coord.latitude)
+                minLon = min(minLon, coord.longitude)
+                maxLon = max(maxLon, coord.longitude)
+            }
+
+            let center = CLLocationCoordinate2D(
+                latitude: (minLat + maxLat) / 2,
+                longitude: (minLon + maxLon) / 2
+            )
+
+            let span = MKCoordinateSpan(
+                latitudeDelta: (maxLat - minLat) * 1.5, // Add 50% padding
+                longitudeDelta: (maxLon - minLon) * 1.5
+            )
+
+            _region = State(initialValue: MKCoordinateRegion(center: center, span: span))
+        } else {
+            _region = State(initialValue: MKCoordinateRegion())
+        }
+    }
+
+    var body: some View {
+        Map(position: .constant(.region(region))) {
+            ForEach(results.indices, id: \.self) { index in
+                let result = results[index]
+                let coordinate = CLLocationCoordinate2D(latitude: result.latitude, longitude: result.longitude)
+
+                Marker(result.name, coordinate: coordinate)
+            }
+        }
+    }
+}
+
+struct MapSearchFullScreenView: View {
+    let results: [MapSearchResult]
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        NavigationStack {
+            MapSearchMapView(results: results)
+                .navigationTitle("Map Results")
+                .toolbarTitleDisplayMode(.inlineLarge)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") {
+                            dismiss()
+                        }
+                    }
+                }
         }
     }
 }

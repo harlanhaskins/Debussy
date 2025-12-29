@@ -13,22 +13,29 @@ import Foundation
 final class ClaudeController {
     private let apiKey: String
     private let customInstructions: String
-    private let mcpServers: [MCPServerConfiguration]
+    private let mcpManager: MCPManager?
     var conversations = [Conversation]()
 
-    init(apiKey: String, customInstructions: String = "", mcpServers: [MCPServerConfiguration] = []) {
+    init(apiKey: String, customInstructions: String = "", mcpServers: [MCPServerConfiguration] = []) async {
         self.apiKey = apiKey
         self.customInstructions = customInstructions
-        self.mcpServers = mcpServers
+
+        // Create and start MCP manager if servers are configured
+        if !mcpServers.isEmpty {
+            let mcpConfig = MCPConfiguration(mcpServers: Dictionary(
+                uniqueKeysWithValues: mcpServers.map { server in
+                    (server.name, MCPServerConfig(url: server.url))
+                }
+            ))
+            let manager = MCPManager(configuration: mcpConfig)
+            await manager.start()
+            self.mcpManager = manager
+        } else {
+            self.mcpManager = nil
+        }
     }
 
-    func createConversation() async -> Conversation {
-        let conversationId = UUID()
-        let filesDir = conversationFilesDirectory(for: conversationId)
-
-        // Create files directory
-        try? FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
-
+    private func makeSystemPrompt(filesDir: URL) -> String {
         var systemPrompt = """
         You are running in a sandboxed Apple platform environment with file system access.
 
@@ -52,7 +59,7 @@ final class ClaudeController {
 
         # Available Tools
 
-        You have access to file operations (Read, Write, Update, List, Grep, Glob), web access (Fetch, WebSearch), JavaScript execution, HTML canvas rendering (WebCanvas), and SubAgent (for spawning parallel sub-tasks).
+        You have access to file operations (Read, Write, Update, List, Grep, Glob), web access (Fetch, WebSearch), JavaScript execution, HTML canvas rendering (WebCanvas), location services (UserLocation, MapSearch), and SubAgent (for spawning parallel sub-tasks).
         """
 
         // Add custom instructions if provided
@@ -60,20 +67,11 @@ final class ClaudeController {
             systemPrompt += "\n\n# Custom Instructions\n\n\(customInstructions)"
         }
 
-        // Create MCP manager if servers are configured
-        let mcpManager: MCPManager?
-        if !mcpServers.isEmpty {
-            let mcpConfig = MCPConfiguration(mcpServers: Dictionary(
-                uniqueKeysWithValues: mcpServers.map { server in
-                    (server.name, MCPServerConfig(url: server.url))
-                }
-            ))
-            mcpManager = MCPManager(configuration: mcpConfig)
-        } else {
-            mcpManager = nil
-        }
+        return systemPrompt
+    }
 
-        let tools = Tools {
+    private func makeTools(workingDirectory: URL, locationController: LocationController) -> Tools {
+        Tools {
             ReadTool()
             WriteTool()
             UpdateTool()
@@ -83,26 +81,23 @@ final class ClaudeController {
             FetchTool()
             WebSearchTool()
             JavaScriptTool()
-            WebCanvasTool(workingDirectory: filesDir)
-            SubAgentTool(apiKey: apiKey, tools: Tools {
-                ReadTool()
-                WriteTool()
-                UpdateTool()
-                ListTool()
-                GrepTool()
-                GlobTool()
-                FetchTool()
-                WebSearchTool()
-                JavaScriptTool()
-                WebCanvasTool(workingDirectory: filesDir)
-            })
+            WebCanvasTool(workingDirectory: workingDirectory)
+            UserLocationTool(locationController: locationController)
+            MapSearchTool(locationController: locationController)
+            SubAgentTool(apiKey: apiKey)
         }
+    }
 
-        let client = try! await ClaudeClient(
+    private func makeClaudeClient(
+        systemPrompt: String,
+        filesDir: URL,
+        tools: Tools
+    ) async throws -> ClaudeClient {
+        try await ClaudeClient(
             options: ClaudeAgentOptions(
                 systemPrompt: systemPrompt,
                 apiKey: apiKey,
-                model: "claude-sonnet-4-5-20250929",
+                model: defaultClaudeModel,
                 workingDirectory: filesDir,
                 compactionEnabled: true,
                 compactionTokenThreshold: 120_000,
@@ -111,6 +106,23 @@ final class ClaudeController {
             tools: tools,
             mcpManager: mcpManager
         )
+    }
+
+    func createConversation() async -> Conversation {
+        let conversationId = UUID()
+        let filesDir = conversationFilesDirectory(for: conversationId)
+
+        // Create files directory
+        try? FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
+
+        let systemPrompt = makeSystemPrompt(filesDir: filesDir)
+        let locationController = LocationController()
+        let tools = makeTools(workingDirectory: filesDir, locationController: locationController)
+        let client = try! await makeClaudeClient(systemPrompt: systemPrompt, filesDir: filesDir, tools: tools)
+
+        // Setup location permission hooks
+        await setupLocationPermissionHook(client: client, locationController: locationController)
+        await setupMapSearchPermissionHook(client: client, locationController: locationController)
 
         let conversation = await Conversation(client: client, id: conversationId)
         conversations.insert(conversation, at: 0)
@@ -177,88 +189,10 @@ final class ClaudeController {
                 // Create files directory if it doesn't exist
                 try? FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
 
-                var systemPrompt = """
-                You are running in a sandboxed Apple platform environment with file system access.
-
-                # Available Directories
-
-                **Working Directory (scratch files):**
-                \(filesDir.path)
-
-                **Temporary Directory:**
-                \(URL.temporaryDirectory.path)
-
-                **OS Version**
-                \(ProcessInfo.processInfo.operatingSystemVersionString)
-
-                # File System Notes
-
-                - You have full read/write access to the working directory and temporary directory
-                - You can attempt to access files outside these directories, but the OS will likely deny access due to sandboxing
-                - All file paths should be absolute (starting with /)
-                - The working directory persists between sessions; temporary directory may be cleared
-
-                # Available Tools
-
-                You have access to file operations (Read, Write, Update, List, Grep, Glob), web access (Fetch, WebSearch), JavaScript execution, HTML canvas rendering (WebCanvas), and SubAgent (for spawning parallel sub-tasks).
-                """
-
-                // Add custom instructions if provided
-                if !customInstructions.isEmpty {
-                    systemPrompt += "\n\n# Custom Instructions\n\n\(customInstructions)"
-                }
-
-                // Create MCP manager if servers are configured
-                let mcpManager: MCPManager?
-                if !mcpServers.isEmpty {
-                    let mcpConfig = MCPConfiguration(mcpServers: Dictionary(
-                        uniqueKeysWithValues: mcpServers.map { server in
-                            (server.name, MCPServerConfig(url: server.url))
-                        }
-                    ))
-                    mcpManager = MCPManager(configuration: mcpConfig)
-                } else {
-                    mcpManager = nil
-                }
-
-                let tools = Tools {
-                    ReadTool()
-                    WriteTool()
-                    UpdateTool()
-                    ListTool()
-                    GrepTool()
-                    GlobTool()
-                    FetchTool()
-                    WebSearchTool()
-                    JavaScriptTool()
-                    WebCanvasTool(workingDirectory: filesDir)
-                    SubAgentTool(apiKey: apiKey, tools: Tools {
-                        ReadTool()
-                        WriteTool()
-                        UpdateTool()
-                        ListTool()
-                        GrepTool()
-                        GlobTool()
-                        FetchTool()
-                        WebSearchTool()
-                        JavaScriptTool()
-                        WebCanvasTool(workingDirectory: filesDir)
-                    })
-                }
-
-                let client = try await ClaudeClient(
-                    options: ClaudeAgentOptions(
-                        systemPrompt: systemPrompt,
-                        apiKey: apiKey,
-                        model: "claude-sonnet-4-5-20250929",
-                        workingDirectory: filesDir,
-                        compactionEnabled: true,
-                        compactionTokenThreshold: 120_000,
-                        keepRecentTokens: 50_000
-                    ),
-                    tools: tools,
-                    mcpManager: mcpManager
-                )
+                let systemPrompt = makeSystemPrompt(filesDir: filesDir)
+                let locationController = LocationController()
+                let tools = makeTools(workingDirectory: filesDir, locationController: locationController)
+                let client = try await makeClaudeClient(systemPrompt: systemPrompt, filesDir: filesDir, tools: tools)
 
                 let conversation = await Conversation(client: client, id: metadata.id)
 

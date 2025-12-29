@@ -24,8 +24,9 @@ struct PersistedToolExecution: Codable {
     let id: String
     let name: String
     let input: String
-    let inputData: Data?
+    let inputData: Data?  // For reconstruction on load
     let output: String
+    let outputData: Data? // For reconstruction on load
     let isError: Bool
 }
 

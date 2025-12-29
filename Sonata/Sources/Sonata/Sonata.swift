@@ -324,7 +324,7 @@ public struct ContentView: View {
         }
 
         if controller == nil {
-            controller = ClaudeController(
+            controller = await ClaudeController(
                 apiKey: settingsManager.apiKey,
                 customInstructions: settingsManager.customInstructions,
                 mcpServers: settingsManager.mcpServers

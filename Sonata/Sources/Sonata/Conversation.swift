@@ -25,6 +25,7 @@ final class Conversation: Identifiable {
 
     // Track tool executions by ID - public so MessageView can look them up
     var toolExecutions: [String: ToolExecution] = [:]
+    private let encoder = JSONEncoder()
 
     /// Title for the conversation based on the first user message
     var title: String {
@@ -54,25 +55,27 @@ final class Conversation: Identifiable {
         }
     }
 
-    private func handleBeforeToolExecution(_ context: BeforeToolExecutionContext) async {
-        let toolInput = RawToolInput(data: context.input)
-        let summary = await client.formatToolCallSummary(toolName: context.toolName, input: toolInput)
-        let metadata = await client.getToolMetadata(toolName: context.toolName)
-        let decodedInput = await client.decodeToolInput(toolName: context.toolName, inputData: context.input)
+    private func handleBeforeToolExecution(_ context: BeforeToolExecutionContext) {
+        let summary: String
+        if let input = context.input {
+            summary = client.formatToolCallSummary(toolName: context.toolName, input: input)
+        } else {
+            summary = "(no input)"
+        }
+        let metadata = client.toolMetadata(toolName: context.toolName)
 
         // Update existing execution or create new one
         if let execution = toolExecutions[context.toolUseId] {
             execution.input = summary
-            execution.inputData = context.input
-            execution.decodedInput = decodedInput
+            execution.decodedInput = context.input
             execution.metadata = metadata
         } else {
             let execution = ToolExecution(
                 id: context.toolUseId,
                 name: context.toolName,
                 input: summary,
-                inputData: context.input,
-                decodedInput: decodedInput,
+                decodedInput: context.input,
+                decodedOutput: nil,
                 metadata: metadata
             )
             toolExecutions[context.toolUseId] = execution
@@ -81,9 +84,17 @@ final class Conversation: Identifiable {
 
     private func handleAfterToolExecution(_ context: AfterToolExecutionContext) async {
         guard let execution = toolExecutions[context.toolUseId] else { return }
+
         execution.output = context.result.content
         execution.isError = context.result.isError
         execution.isComplete = true
+
+        // Store structured output if present
+        if context.result.structuredOutput != nil {
+            execution.decodedOutput = context.output
+        }
+
+        try? await saveSession()
     }
 
     // MARK: - Messaging
@@ -116,7 +127,9 @@ final class Conversation: Identifiable {
                                     id: toolBlock.id,
                                     name: toolBlock.name,
                                     input: "", // Will be filled by hook
-                                    inputData: toolBlock.input.data
+                                    decodedInput: client.decodeToolInput(toolName: toolBlock.name, inputData: toolBlock.input.data),
+                                    decodedOutput: nil,
+                                    metadata: [:]
                                 )
                             }
 
@@ -201,12 +214,21 @@ final class Conversation: Identifiable {
         var manifest = ToolOutputsManifest(executions: [:])
 
         for (id, execution) in toolExecutions {
+            // Encode decoded input/output to Data for persistence
+            let inputData = execution.decodedInput.flatMap { input in
+                try? encoder.encode(input)
+            }
+            let outputData = execution.decodedOutput.flatMap { output in
+                try? encoder.encode(output)
+            }
+
             manifest.executions[id] = PersistedToolExecution(
                 id: execution.id,
                 name: execution.name,
                 input: execution.input,
-                inputData: execution.inputData,
+                inputData: inputData,
                 output: execution.output,
+                outputData: outputData,
                 isError: execution.isError
             )
         }
@@ -222,11 +244,21 @@ final class Conversation: Identifiable {
         let manifest: ToolOutputsManifest = try loadJSON(from: toolOutputsFileURL)
 
         for (id, persisted) in manifest.executions {
+            // Decode input/output from persisted data
+            let decodedInput = persisted.inputData.flatMap {
+                client.decodeToolInput(toolName: persisted.name, inputData: $0)
+            }
+            let decodedOutput = persisted.outputData.flatMap {
+                client.decodeToolOutput(toolName: persisted.name, outputData: $0)
+            }
+
             let execution = ToolExecution(
                 id: persisted.id,
                 name: persisted.name,
                 input: persisted.input,
-                inputData: persisted.inputData
+                decodedInput: decodedInput,
+                decodedOutput: decodedOutput,
+                metadata: [:]
             )
             execution.output = persisted.output
             execution.isError = persisted.isError
@@ -311,7 +343,9 @@ final class Conversation: Identifiable {
                                 id: toolBlock.id,
                                 name: toolBlock.name,
                                 input: "", // Will be empty if not persisted
-                                inputData: toolBlock.input.data
+                                decodedInput: client.decodeToolInput(toolName: toolBlock.name, inputData: toolBlock.input.data),
+                                decodedOutput: nil,
+                                metadata: [:]
                             )
                             newExecution.isComplete = true
                             toolExecutions[toolBlock.id] = newExecution
