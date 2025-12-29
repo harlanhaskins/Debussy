@@ -19,11 +19,13 @@ class ToolExecution: Identifiable {
     var output: String = ""
     var isError: Bool = false
     var isComplete: Bool = false
+    var metadata: [String: String] = [:] // Additional metadata (e.g., MCP server name)
 
-    init(id: String, name: String, input: String, inputData: Data? = nil) {
+    init(id: String, name: String, input: String, inputData: Data? = nil, metadata: [String: String] = [:]) {
         self.id = id
         self.name = name
         self.input = input
         self.inputData = inputData
+        self.metadata = metadata
     }
 }

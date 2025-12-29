@@ -14,8 +14,10 @@ struct SettingsView: View {
     @Binding var apiKey: String
     @Binding var customInstructions: String
     @Binding var mcpServers: [MCPServerConfiguration]
+    var onDeleteAllData: () -> Void
 
     @State private var showingAddServer = false
+    @State private var showingDeleteConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -56,6 +58,17 @@ struct SettingsView: View {
                     Text("Only HTTP MCP servers are supported on iOS")
                         .font(.caption)
                 }
+
+                Section {
+                    Button(role: .destructive) {
+                        showingDeleteConfirmation = true
+                    } label: {
+                        Label("Delete All Data", systemImage: "trash")
+                    }
+                } footer: {
+                    Text("This will delete all conversations, files, and reset all settings")
+                        .font(.caption)
+                }
             }
             .navigationTitle("Settings")
             .toolbar {
@@ -67,6 +80,19 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $showingAddServer) {
                 AddMCPServerView(servers: $mcpServers)
+            }
+            .confirmationDialog(
+                "Delete All Data?",
+                isPresented: $showingDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete All Data", role: .destructive) {
+                    onDeleteAllData()
+                    dismiss()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will permanently delete all conversations, files, MCP servers, and reset all settings. This cannot be undone.")
             }
         }
     }
@@ -107,8 +133,7 @@ struct AddMCPServerView: View {
 
                     TextField("URL", text: $url)
                         .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.URL)
+                        .textContentType(.URL)
                 }
 
                 Section {
@@ -118,7 +143,7 @@ struct AddMCPServerView: View {
                 }
             }
             .navigationTitle("Add MCP Server")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbarTitleDisplayMode(.inlineLarge)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {

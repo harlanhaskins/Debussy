@@ -12,10 +12,14 @@ import Foundation
 @MainActor @Observable
 final class ClaudeController {
     private let apiKey: String
+    private let customInstructions: String
+    private let mcpServers: [MCPServerConfiguration]
     var conversations = [Conversation]()
 
-    init(apiKey: String) {
+    init(apiKey: String, customInstructions: String = "", mcpServers: [MCPServerConfiguration] = []) {
         self.apiKey = apiKey
+        self.customInstructions = customInstructions
+        self.mcpServers = mcpServers
     }
 
     func createConversation() async -> Conversation {
@@ -25,7 +29,7 @@ final class ClaudeController {
         // Create files directory
         try? FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
 
-        let systemPrompt = """
+        var systemPrompt = """
         You are running in a sandboxed Apple platform environment with file system access.
 
         # Available Directories
@@ -35,7 +39,7 @@ final class ClaudeController {
 
         **Temporary Directory:**
         \(URL.temporaryDirectory.path)
-        
+
         **OS Version**
         \(ProcessInfo.processInfo.operatingSystemVersionString)
 
@@ -48,8 +52,51 @@ final class ClaudeController {
 
         # Available Tools
 
-        You have access to file operations (Read, Write, Update, List, Grep, Glob), web access (Fetch, WebSearch), JavaScript execution, and HTML canvas rendering (WebCanvas).
+        You have access to file operations (Read, Write, Update, List, Grep, Glob), web access (Fetch, WebSearch), JavaScript execution, HTML canvas rendering (WebCanvas), and SubAgent (for spawning parallel sub-tasks).
         """
+
+        // Add custom instructions if provided
+        if !customInstructions.isEmpty {
+            systemPrompt += "\n\n# Custom Instructions\n\n\(customInstructions)"
+        }
+
+        // Create MCP manager if servers are configured
+        let mcpManager: MCPManager?
+        if !mcpServers.isEmpty {
+            let mcpConfig = MCPConfiguration(mcpServers: Dictionary(
+                uniqueKeysWithValues: mcpServers.map { server in
+                    (server.name, MCPServerConfig(url: server.url))
+                }
+            ))
+            mcpManager = MCPManager(configuration: mcpConfig)
+        } else {
+            mcpManager = nil
+        }
+
+        let tools = Tools {
+            ReadTool()
+            WriteTool()
+            UpdateTool()
+            ListTool()
+            GrepTool()
+            GlobTool()
+            FetchTool()
+            WebSearchTool()
+            JavaScriptTool()
+            WebCanvasTool(workingDirectory: filesDir)
+            SubAgentTool(apiKey: apiKey, tools: Tools {
+                ReadTool()
+                WriteTool()
+                UpdateTool()
+                ListTool()
+                GrepTool()
+                GlobTool()
+                FetchTool()
+                WebSearchTool()
+                JavaScriptTool()
+                WebCanvasTool(workingDirectory: filesDir)
+            })
+        }
 
         let client = try! await ClaudeClient(
             options: ClaudeAgentOptions(
@@ -61,18 +108,8 @@ final class ClaudeController {
                 compactionTokenThreshold: 120_000,
                 keepRecentTokens: 50_000
             ),
-            tools: Tools {
-                ReadTool()
-                WriteTool()
-                UpdateTool()
-                ListTool()
-                GrepTool()
-                GlobTool()
-                FetchTool()
-                WebSearchTool()
-                JavaScriptTool()
-                WebCanvasTool(workingDirectory: filesDir)
-            }
+            tools: tools,
+            mcpManager: mcpManager
         )
 
         let conversation = await Conversation(client: client, id: conversationId)
@@ -108,16 +145,13 @@ final class ClaudeController {
         let manifestURL = documentsURL.appendingPathComponent("conversations/conversations.json")
 
         guard FileManager.default.fileExists(atPath: manifestURL.path),
-              let data = try? Data(contentsOf: manifestURL),
-              var manifest = try? JSONDecoder().decode(ConversationsManifest.self, from: data) else {
+              var manifest = try? loadJSON(from: manifestURL) as ConversationsManifest else {
             return
         }
 
         manifest.conversations.removeAll { $0.id == id }
 
-        if let data = try? JSONEncoder().encode(manifest) {
-            try? data.write(to: manifestURL)
-        }
+        try? saveJSON(manifest, to: manifestURL)
     }
 
     func loadPersistedConversations() async {
@@ -125,8 +159,7 @@ final class ClaudeController {
         let manifestURL = documentsURL.appendingPathComponent("conversations/conversations.json")
 
         guard FileManager.default.fileExists(atPath: manifestURL.path),
-              let data = try? Data(contentsOf: manifestURL),
-              let manifest = try? JSONDecoder().decode(ConversationsManifest.self, from: data) else {
+              let manifest = try? loadJSON(from: manifestURL) as ConversationsManifest else {
             return
         }
 
@@ -144,8 +177,8 @@ final class ClaudeController {
                 // Create files directory if it doesn't exist
                 try? FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
 
-                let systemPrompt = """
-                You are running in a sandboxed environment with file system access.
+                var systemPrompt = """
+                You are running in a sandboxed Apple platform environment with file system access.
 
                 # Available Directories
 
@@ -154,6 +187,9 @@ final class ClaudeController {
 
                 **Temporary Directory:**
                 \(URL.temporaryDirectory.path)
+
+                **OS Version**
+                \(ProcessInfo.processInfo.operatingSystemVersionString)
 
                 # File System Notes
 
@@ -164,8 +200,51 @@ final class ClaudeController {
 
                 # Available Tools
 
-                You have access to file operations (Read, Write, Update, List, Grep, Glob), web access (Fetch, WebSearch), JavaScript execution, and HTML canvas rendering (WebCanvas).
+                You have access to file operations (Read, Write, Update, List, Grep, Glob), web access (Fetch, WebSearch), JavaScript execution, HTML canvas rendering (WebCanvas), and SubAgent (for spawning parallel sub-tasks).
                 """
+
+                // Add custom instructions if provided
+                if !customInstructions.isEmpty {
+                    systemPrompt += "\n\n# Custom Instructions\n\n\(customInstructions)"
+                }
+
+                // Create MCP manager if servers are configured
+                let mcpManager: MCPManager?
+                if !mcpServers.isEmpty {
+                    let mcpConfig = MCPConfiguration(mcpServers: Dictionary(
+                        uniqueKeysWithValues: mcpServers.map { server in
+                            (server.name, MCPServerConfig(url: server.url))
+                        }
+                    ))
+                    mcpManager = MCPManager(configuration: mcpConfig)
+                } else {
+                    mcpManager = nil
+                }
+
+                let tools = Tools {
+                    ReadTool()
+                    WriteTool()
+                    UpdateTool()
+                    ListTool()
+                    GrepTool()
+                    GlobTool()
+                    FetchTool()
+                    WebSearchTool()
+                    JavaScriptTool()
+                    WebCanvasTool(workingDirectory: filesDir)
+                    SubAgentTool(apiKey: apiKey, tools: Tools {
+                        ReadTool()
+                        WriteTool()
+                        UpdateTool()
+                        ListTool()
+                        GrepTool()
+                        GlobTool()
+                        FetchTool()
+                        WebSearchTool()
+                        JavaScriptTool()
+                        WebCanvasTool(workingDirectory: filesDir)
+                    })
+                }
 
                 let client = try await ClaudeClient(
                     options: ClaudeAgentOptions(
@@ -177,18 +256,8 @@ final class ClaudeController {
                         compactionTokenThreshold: 120_000,
                         keepRecentTokens: 50_000
                     ),
-                    tools: Tools {
-                        ReadTool()
-                        WriteTool()
-                        UpdateTool()
-                        ListTool()
-                        GrepTool()
-                        GlobTool()
-                        FetchTool()
-                        WebSearchTool()
-                        JavaScriptTool()
-                        WebCanvasTool(workingDirectory: filesDir)
-                    }
+                    tools: tools,
+                    mcpManager: mcpManager
                 )
 
                 let conversation = await Conversation(client: client, id: metadata.id)

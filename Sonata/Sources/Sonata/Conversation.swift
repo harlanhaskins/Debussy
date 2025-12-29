@@ -57,17 +57,20 @@ final class Conversation: Identifiable {
     private func handleBeforeToolExecution(_ context: BeforeToolExecutionContext) async {
         let toolInput = ToolInput(data: context.input)
         let summary = await client.formatToolCallSummary(toolName: context.toolName, input: toolInput)
+        let metadata = await client.getToolMetadata(toolName: context.toolName)
 
         // Update existing execution or create new one
         if let execution = toolExecutions[context.toolUseId] {
             execution.input = summary
             execution.inputData = context.input
+            execution.metadata = metadata
         } else {
             let execution = ToolExecution(
                 id: context.toolUseId,
                 name: context.toolName,
                 input: summary,
-                inputData: context.input
+                inputData: context.input,
+                metadata: metadata
             )
             toolExecutions[context.toolUseId] = execution
         }
@@ -205,8 +208,7 @@ final class Conversation: Identifiable {
             )
         }
 
-        let data = try JSONEncoder().encode(manifest)
-        try data.write(to: toolOutputsFileURL)
+        try saveJSON(manifest, to: toolOutputsFileURL)
     }
 
     private func loadToolOutputs() throws {
@@ -214,8 +216,7 @@ final class Conversation: Identifiable {
             return
         }
 
-        let data = try Data(contentsOf: toolOutputsFileURL)
-        let manifest = try JSONDecoder().decode(ToolOutputsManifest.self, from: data)
+        let manifest: ToolOutputsManifest = try loadJSON(from: toolOutputsFileURL)
 
         for (id, persisted) in manifest.executions {
             let execution = ToolExecution(
@@ -251,8 +252,7 @@ final class Conversation: Identifiable {
 
         var manifest: ConversationsManifest
         if FileManager.default.fileExists(atPath: manifestURL.path),
-           let data = try? Data(contentsOf: manifestURL),
-           let existing = try? JSONDecoder().decode(ConversationsManifest.self, from: data) {
+           let existing = try? loadJSON(from: manifestURL) as ConversationsManifest {
             manifest = existing
         } else {
             manifest = ConversationsManifest(conversations: [])
@@ -273,8 +273,7 @@ final class Conversation: Identifiable {
             at: manifestURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let data = try JSONEncoder().encode(manifest)
-        try data.write(to: manifestURL)
+        try saveJSON(manifest, to: manifestURL)
     }
 
     func rebuildMessagesFromHistory() async {

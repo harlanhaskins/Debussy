@@ -492,6 +492,19 @@ struct GenericToolExecutionDetailContent: View {
 
     var body: some View {
         Group {
+            // MCP Server metadata (if present)
+            if let serverName = execution.metadata["server"] {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("MCP Server")
+                        .font(.headline)
+                    Text(serverName)
+                        .font(.body)
+                        .fontDesign(.monospaced)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+
             // Input section
             if !execution.input.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -606,6 +619,7 @@ struct WebCanvasView: View {
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.displayScale) var displayScale
     @State private var aspectRatio: CGFloat = 1.0
+    @State private var showingFullScreen = false
 
     var borderColor: Color {
         colorScheme == .dark ? .darkBorder : .lightBorder
@@ -622,16 +636,31 @@ struct WebCanvasView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Title bar
+            HStack {
+                Text("WebCanvas")
+                    .font(.headline)
+                    .fontDesign(.monospaced)
+                Spacer()
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .background(Color.secondary.opacity(0.05))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                showingFullScreen = true
+            }
+
+            Divider()
+
+            // Canvas preview
             if let path = filePath {
                 let url = URL(filePath: path)
                 WebView(url: url)
                     .aspectRatio(aspectRatio, contentMode: .fit)
-                    .frame(maxWidth: 600)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
-                    }
+                    .frame(maxWidth: 600, maxHeight: 400)
                     .task {
                         // Parse aspect ratio from output
                         if let aspectLine = execution.output.split(separator: "\n").first(where: { $0.contains("Aspect ratio:") }),
@@ -647,6 +676,50 @@ struct WebCanvasView: View {
                 Text("Failed to load canvas")
                     .foregroundStyle(.secondary)
                     .padding()
+            }
+        }
+        .background(Color.secondary.opacity(0.1), in: .rect(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
+        }
+        .sheet(isPresented: $showingFullScreen) {
+            WebCanvasFullScreenView(execution: execution, aspectRatio: aspectRatio)
+        }
+    }
+}
+
+struct WebCanvasFullScreenView: View {
+    var execution: ToolExecution
+    var aspectRatio: CGFloat
+    @Environment(\.dismiss) var dismiss
+
+    var filePath: String? {
+        guard let line = execution.output.split(separator: "\n").first,
+              let pathStart = line.range(of: "Created canvas at ")?.upperBound else {
+            return nil
+        }
+        return String(line[pathStart...])
+    }
+
+    var body: some View {
+        NavigationStack {
+            if let path = filePath {
+                let url = URL(filePath: path)
+                WebView(url: url)
+                    .aspectRatio(aspectRatio, contentMode: .fit)
+                    .navigationTitle("WebCanvas")
+                    .toolbarTitleDisplayMode(.inlineLarge)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") {
+                                dismiss()
+                            }
+                        }
+                    }
+            } else {
+                Text("Failed to load canvas")
+                    .foregroundStyle(.secondary)
             }
         }
     }
