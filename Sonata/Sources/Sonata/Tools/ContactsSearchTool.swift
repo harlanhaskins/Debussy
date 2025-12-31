@@ -45,7 +45,7 @@ public struct ContactsSearchTool: Tool {
         do {
             let results = try await contactsController.searchContacts(
                 query: trimmedQuery,
-                limit: input.resultLimit
+                limit: input.resultLimit ?? 10
             )
 
             if results.isEmpty {
@@ -105,7 +105,7 @@ public struct ContactsSearchTool: Tool {
 
 public struct ContactsSearchToolInput: ToolInput {
     public let query: String
-    public let resultLimit: Int
+    public let resultLimit: Int?
 
     public init(query: String, resultLimit: Int = 10) {
         self.query = query
