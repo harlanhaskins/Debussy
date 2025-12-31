@@ -135,6 +135,60 @@ public class ContactsController {
         return matchingContacts
     }
 
+    /// Add a new contact to the user's contacts
+    /// - Parameters:
+    ///   - givenName: First name
+    ///   - familyName: Last name
+    ///   - phoneNumbers: Phone numbers with optional labels
+    ///   - emailAddresses: Email addresses
+    ///   - organization: Company/organization name
+    /// - Returns: The created contact's identifier
+    public func addContact(
+        givenName: String?,
+        familyName: String?,
+        phoneNumbers: [(label: String?, number: String)]?,
+        emailAddresses: [String]?,
+        organization: String?
+    ) async throws -> String {
+        guard isAuthorized else {
+            throw ContactsError.permissionDenied
+        }
+
+        let contact = CNMutableContact()
+
+        if let givenName = givenName {
+            contact.givenName = givenName
+        }
+        if let familyName = familyName {
+            contact.familyName = familyName
+        }
+        if let organization = organization {
+            contact.organizationName = organization
+        }
+
+        if let phoneNumbers = phoneNumbers {
+            contact.phoneNumbers = phoneNumbers.map { phone in
+                let phoneNumber = CNPhoneNumber(stringValue: phone.number)
+                let label = phone.label ?? CNLabelPhoneNumberMain
+                return CNLabeledValue(label: label, value: phoneNumber)
+            }
+        }
+
+        if let emailAddresses = emailAddresses {
+            contact.emailAddresses = emailAddresses.enumerated().map { index, email in
+                let label = index == 0 ? CNLabelHome : CNLabelWork
+                return CNLabeledValue(label: label, value: email as NSString)
+            }
+        }
+
+        let saveRequest = CNSaveRequest()
+        saveRequest.add(contact, toContainerWithIdentifier: nil)
+
+        try store.execute(saveRequest)
+
+        return contact.identifier
+    }
+
     // MARK: - Private Helpers
 
     private func convertContact(_ contact: CNContact, query: String) -> ContactResult {

@@ -91,6 +91,7 @@ final class ClaudeController {
             UserLocationTool(locationController: locationController)
             MapSearchTool(locationController: locationController)
             ContactsSearchTool(contactsController: contactsController)
+            AddToContactsTool(contactsController: contactsController)
             SubAgentTool(apiKey: apiKey, outputCallback: subAgentCallback)
         }
     }
@@ -150,6 +151,7 @@ final class ClaudeController {
         await setupLocationPermissionHook(client: client, locationController: locationController)
         await setupMapSearchPermissionHook(client: client, locationController: locationController)
         await setupContactsPermissionHook(client: client, contactsController: contactsController)
+        await setupAddToContactsPermissionHook(client: client, contactsController: contactsController)
 
         let conversation = await Conversation(client: client, id: conversationId)
         holder.conversation = conversation

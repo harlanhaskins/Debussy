@@ -18,7 +18,7 @@ public struct ContactsSearchTool: Tool {
     private let contactsController: ContactsController
 
     public var description: String {
-        "Search the user's contacts by name, email, phone number, or address. Returns contact information including phone numbers, email addresses, and postal addresses."
+        "Search the user's contacts by name, email, phone number, or address. Returns contact information including phone numbers, email addresses, and postal addresses. Area codes in phone numbers can be used to perform location-specific queries when postal addresses are not available."
     }
 
     public var inputSchema: JSONSchema {
