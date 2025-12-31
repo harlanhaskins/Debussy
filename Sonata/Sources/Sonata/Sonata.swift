@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftClaude
 import UniformTypeIdentifiers
+import System
 
 #if canImport(UIKit)
 import UIKit
@@ -8,15 +9,15 @@ import UIKit
 
 // MARK: - JSON File Utilities
 
-func saveJSON<T: Encodable>(_ value: T, to url: URL) throws {
+func saveJSON<T: Encodable>(_ value: T, to path: FilePath) throws {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let data = try encoder.encode(value)
-    try data.write(to: url)
+    try data.write(to: URL(filePath: path)!)
 }
 
-func loadJSON<T: Decodable>(from url: URL) throws -> T {
-    let data = try Data(contentsOf: url)
+func loadJSON<T: Decodable>(from path: FilePath) throws -> T {
+    let data = try Data(contentsOf: URL(filePath: path)!)
     let decoder = JSONDecoder()
     return try decoder.decode(T.self, from: data)
 }
@@ -68,36 +69,49 @@ struct ConversationView: View {
             .contentMargins(8, for: .scrollContent)
         }
         .safeAreaBar(edge: .bottom) {
-            HStack {
-                TextField("Message", text: $message)
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Message", text: $message, axis: .vertical)
                     .onSubmit(sendCurrentMessage)
                     .submitLabel(.send)
                     .textFieldStyle(.plain)
                     .disabled(sendingMessageTask != nil)
-                if sendingMessageTask == nil {
-                    Button("Send message", systemImage: "arrow.up", action: sendCurrentMessage)
-                        .buttonStyle(.bordered)
+                    .lineLimit(1...10)
+                    .frame(minHeight: 24)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .glassEffect(in: .rect(cornerRadius: 22))
+
+                ZStack {
+                    if sendingMessageTask == nil {
+                        Button(action: sendCurrentMessage) {
+                            Label("Send message", systemImage: "arrow.up")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                        .buttonStyle(.glassProminent)
                         .buttonBorderShape(.circle)
                         .imageScale(.large)
                         .tint(Color.claudeOrange)
                         .disabled(message.isEmpty)
-                } else {
-                    Button("Stop", systemImage: "stop.fill") {
-                        sendingMessageTask?.cancel()
-                        sendingMessageTask = nil
-                        if let sendingMessageText {
-                            message = sendingMessageText
-                            self.sendingMessageText = nil
+                    } else {
+                        Button {
+                            sendingMessageTask?.cancel()
+                            sendingMessageTask = nil
+                            if let sendingMessageText {
+                                message = sendingMessageText
+                                self.sendingMessageText = nil
+                            }
+                        } label: {
+                            Label("Stop", systemImage: "stop.fill")
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
+                        .buttonStyle(.glassProminent)
+                        .buttonBorderShape(.circle)
+                        .imageScale(.large)
+                        .tint(Color.claudeOrange)
                     }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.circle)
-                    .imageScale(.large)
-                    .tint(Color.claudeOrange)
                 }
+                .frame(width: 44, height: 44)
             }
-            .padding(10)
-            .glassEffect(in: .capsule)
             .padding(8)
         }
     }
@@ -124,9 +138,10 @@ class SettingsManager {
     private static let apiKeyKey = "anthropic_api_key"
     private static let customInstructionsKey = "custom_instructions"
 
-    private var mcpServersFileURL: URL {
+    private var mcpServersFilePath: FilePath {
         let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return documentsURL.appendingPathComponent("mcp-servers.json")
+        let fileURL = documentsURL.appendingPathComponent("mcp-servers.json")
+        return FilePath(fileURL.path)
     }
 
     var apiKey: String {
@@ -156,19 +171,19 @@ class SettingsManager {
 
     private func saveMCPServers() {
         do {
-            try saveJSON(mcpServers, to: mcpServersFileURL)
+            try saveJSON(mcpServers, to: mcpServersFilePath)
         } catch {
             print("Failed to save MCP servers: \(error)")
         }
     }
 
     private func loadMCPServers() {
-        guard FileManager.default.fileExists(atPath: mcpServersFileURL.path) else {
+        guard FileManager.default.fileExists(atPath: mcpServersFilePath.string) else {
             return
         }
 
         do {
-            mcpServers = try loadJSON(from: mcpServersFileURL)
+            mcpServers = try loadJSON(from: mcpServersFilePath)
         } catch {
             print("Failed to load MCP servers: \(error)")
         }
@@ -184,7 +199,7 @@ class SettingsManager {
         UserDefaults.standard.removeObject(forKey: Self.customInstructionsKey)
 
         // Delete MCP servers file
-        try? FileManager.default.removeItem(at: mcpServersFileURL)
+        try? FileManager.default.removeItem(at: URL(filePath: mcpServersFilePath)!)
 
         // Delete conversations directory
         let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]

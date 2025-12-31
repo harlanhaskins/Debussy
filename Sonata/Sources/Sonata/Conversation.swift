@@ -8,6 +8,7 @@
 import SwiftClaude
 import SwiftUI
 import Foundation
+import System
 import Collections
 
 @MainActor @Observable
@@ -242,20 +243,21 @@ final class Conversation: Identifiable {
 
     // MARK: - Persistence
 
-    private var documentsDirectory: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    private var documentsDirectory: FilePath {
+        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return FilePath(url.path)
     }
 
-    private var conversationDirectory: URL {
-        documentsDirectory.appendingPathComponent("conversations/\(id.uuidString)")
+    private var conversationDirectory: FilePath {
+        documentsDirectory.appending("conversations").appending(id.uuidString)
     }
 
-    private var sessionFileURL: URL {
-        conversationDirectory.appendingPathComponent("session.json")
+    private var sessionFilePath: FilePath {
+        conversationDirectory.appending("session.json")
     }
 
-    private var toolOutputsFileURL: URL {
-        conversationDirectory.appendingPathComponent("tool_outputs.json")
+    private var toolOutputsFilePath: FilePath {
+        conversationDirectory.appending("tool_outputs.json")
     }
 
     var lastMessageTimestamp: Date {
@@ -285,15 +287,15 @@ final class Conversation: Identifiable {
             )
         }
 
-        try saveJSON(manifest, to: toolOutputsFileURL)
+        try saveJSON(manifest, to: toolOutputsFilePath)
     }
 
     private func loadToolOutputs() throws {
-        guard FileManager.default.fileExists(atPath: toolOutputsFileURL.path) else {
+        guard FileManager.default.fileExists(atPath: toolOutputsFilePath.string) else {
             return
         }
 
-        let manifest: ToolOutputsManifest = try loadJSON(from: toolOutputsFileURL)
+        let manifest: ToolOutputsManifest = try loadJSON(from: toolOutputsFilePath)
 
         for (id, persisted) in manifest.executions {
             // Decode input/output from persisted data
@@ -346,12 +348,12 @@ final class Conversation: Identifiable {
 
     func saveSession() async throws {
         try FileManager.default.createDirectory(
-            at: conversationDirectory,
+            at: URL(filePath: conversationDirectory)!,
             withIntermediateDirectories: true
         )
 
         let data = try await client.exportSession()
-        try data.write(to: sessionFileURL)
+        try data.write(to: URL(filePath: sessionFilePath)!)
 
         // Save tool outputs
         try saveToolOutputs()
@@ -360,11 +362,12 @@ final class Conversation: Identifiable {
     }
 
     private func updateConversationsManifest() async throws {
-        let manifestURL = documentsDirectory.appendingPathComponent("conversations/conversations.json")
+        let manifestPath = documentsDirectory.appending("conversations").appending("conversations.json")
+        let manifestURL = URL(filePath: manifestPath)!
 
         var manifest: ConversationsManifest
-        if FileManager.default.fileExists(atPath: manifestURL.path),
-           let existing = try? loadJSON(from: manifestURL) as ConversationsManifest {
+        if FileManager.default.fileExists(atPath: manifestPath.string),
+           let existing = try? loadJSON(from: manifestPath) as ConversationsManifest {
             manifest = existing
         } else {
             manifest = ConversationsManifest(conversations: [])
@@ -385,7 +388,7 @@ final class Conversation: Identifiable {
             at: manifestURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try saveJSON(manifest, to: manifestURL)
+        try saveJSON(manifest, to: manifestPath)
     }
 
     func rebuildMessagesFromHistory() async {

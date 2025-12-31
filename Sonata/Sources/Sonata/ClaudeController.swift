@@ -8,6 +8,7 @@
 import SwiftClaude
 import SwiftUI
 import Foundation
+import System
 
 @MainActor @Observable
 final class ClaudeController {
@@ -35,17 +36,17 @@ final class ClaudeController {
         }
     }
 
-    private func makeSystemPrompt(filesDir: URL) -> String {
+    private func makeSystemPrompt(filesDir: FilePath) -> String {
         var systemPrompt = """
         You are running in a sandboxed Apple platform environment with file system access.
 
         # Available Directories
 
         **Working Directory (scratch files):**
-        \(filesDir.path)
+        \(filesDir.string)
 
         **Temporary Directory:**
-        \(URL.temporaryDirectory.path)
+        \(FilePath(URL.temporaryDirectory.path).string)
 
         **OS Version**
         \(ProcessInfo.processInfo.operatingSystemVersionString)
@@ -71,8 +72,9 @@ final class ClaudeController {
     }
 
     private func makeTools(
-        workingDirectory: URL,
+        workingDirectory: FilePath,
         locationController: LocationController,
+        contactsController: ContactsController,
         subAgentCallback: @escaping SubAgentTool.OutputCallback
     ) -> Tools {
         Tools {
@@ -85,16 +87,17 @@ final class ClaudeController {
             FetchTool()
             WebSearchTool()
             JavaScriptTool()
-            WebCanvasTool(workingDirectory: workingDirectory)
+            WebCanvasTool(workingDirectory: URL(filePath: workingDirectory)!)
             UserLocationTool(locationController: locationController)
             MapSearchTool(locationController: locationController)
+            ContactsSearchTool(contactsController: contactsController)
             SubAgentTool(apiKey: apiKey, outputCallback: subAgentCallback)
         }
     }
 
     private func makeClaudeClient(
         systemPrompt: String,
-        filesDir: URL,
+        filesDir: FilePath,
         tools: Tools
     ) async throws -> ClaudeClient {
         try await ClaudeClient(
@@ -102,7 +105,7 @@ final class ClaudeController {
                 systemPrompt: systemPrompt,
                 apiKey: apiKey,
                 model: defaultClaudeModel,
-                workingDirectory: filesDir,
+                workingDirectory: URL(filePath: filesDir)!,
                 compactionEnabled: true,
                 compactionTokenThreshold: 120_000,
                 keepRecentTokens: 50_000
@@ -112,23 +115,22 @@ final class ClaudeController {
         )
     }
 
-    func createConversation() async -> Conversation {
-        let conversationId = UUID()
-        let filesDir = conversationFilesDirectory(for: conversationId)
-
-        // Create files directory
-        try? FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
-
+    private func setupClientAndConversation(
+        conversationId: UUID,
+        filesDir: FilePath
+    ) async throws -> Conversation {
         let systemPrompt = makeSystemPrompt(filesDir: filesDir)
         let locationController = LocationController()
+        let contactsController = ContactsController()
 
-        // Create a holder for the conversation reference (will be set after conversation is created)
-        final class ConversationHolder: @unchecked Sendable {
+        // Create a holder for the conversation reference
+        @MainActor
+        final class ConversationHolder {
             var conversation: Conversation?
         }
         let holder = ConversationHolder()
 
-        // Create SubAgent callback that will update the conversation's tool executions
+        // Create SubAgent callback
         let subAgentCallback: @Sendable (SubAgentOutput) -> Void = { output in
             guard case .toolCall(let toolName, let summary) = output.event else { return }
             Task { @MainActor in
@@ -139,26 +141,45 @@ final class ClaudeController {
         let tools = makeTools(
             workingDirectory: filesDir,
             locationController: locationController,
+            contactsController: contactsController,
             subAgentCallback: subAgentCallback
         )
-        let client = try! await makeClaudeClient(systemPrompt: systemPrompt, filesDir: filesDir, tools: tools)
+        let client = try await makeClaudeClient(systemPrompt: systemPrompt, filesDir: filesDir, tools: tools)
 
-        // Setup location permission hooks
+        // Setup permission hooks
         await setupLocationPermissionHook(client: client, locationController: locationController)
         await setupMapSearchPermissionHook(client: client, locationController: locationController)
+        await setupContactsPermissionHook(client: client, contactsController: contactsController)
 
         let conversation = await Conversation(client: client, id: conversationId)
         holder.conversation = conversation
+
+        return conversation
+    }
+
+    func createConversation() async -> Conversation {
+        let conversationId = UUID()
+        let filesDir = conversationFilesDirectory(for: conversationId)
+
+        // Create files directory
+        try? FileManager.default.createDirectory(at: URL(filePath: filesDir)!, withIntermediateDirectories: true)
+
+        let conversation = try! await setupClientAndConversation(
+            conversationId: conversationId,
+            filesDir: filesDir
+        )
+
         conversations.insert(conversation, at: 0)
         return conversation
     }
 
-    private func conversationFilesDirectory(for conversationId: UUID) -> URL {
+    private func conversationFilesDirectory(for conversationId: UUID) -> FilePath {
         let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return documentsURL
+        let fileURL = documentsURL
             .appendingPathComponent("conversations")
             .appendingPathComponent(conversationId.uuidString)
             .appendingPathComponent("files")
+        return FilePath(fileURL.path)
     }
 
     private func conversationDirectory(for conversationId: UUID) -> URL {
@@ -179,23 +200,25 @@ final class ClaudeController {
         // Update manifest
         let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let manifestURL = documentsURL.appendingPathComponent("conversations/conversations.json")
+        let manifestPath = FilePath(manifestURL.path)
 
         guard FileManager.default.fileExists(atPath: manifestURL.path),
-              var manifest = try? loadJSON(from: manifestURL) as ConversationsManifest else {
+              var manifest = try? loadJSON(from: manifestPath) as ConversationsManifest else {
             return
         }
 
         manifest.conversations.removeAll { $0.id == id }
 
-        try? saveJSON(manifest, to: manifestURL)
+        try? saveJSON(manifest, to: manifestPath)
     }
 
     func loadPersistedConversations() async {
         let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let manifestURL = documentsURL.appendingPathComponent("conversations/conversations.json")
+        let manifestPath = FilePath(manifestURL.path)
 
         guard FileManager.default.fileExists(atPath: manifestURL.path),
-              let manifest = try? loadJSON(from: manifestURL) as ConversationsManifest else {
+              let manifest = try? loadJSON(from: manifestPath) as ConversationsManifest else {
             return
         }
 
@@ -211,34 +234,12 @@ final class ClaudeController {
                 let filesDir = conversationFilesDirectory(for: metadata.id)
 
                 // Create files directory if it doesn't exist
-                try? FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
+                try? FileManager.default.createDirectory(at: URL(filePath: filesDir)!, withIntermediateDirectories: true)
 
-                let systemPrompt = makeSystemPrompt(filesDir: filesDir)
-                let locationController = LocationController()
-
-                // Create a holder for the conversation reference
-                final class ConversationHolder: @unchecked Sendable {
-                    var conversation: Conversation?
-                }
-                let holder = ConversationHolder()
-
-                // Create SubAgent callback
-                let subAgentCallback: @Sendable (SubAgentOutput) -> Void = { output in
-                    guard case .toolCall(let toolName, let summary) = output.event else { return }
-                    Task { @MainActor in
-                        holder.conversation?.handleSubAgentToolCall(taskId: output.taskId, toolName: toolName, summary: summary)
-                    }
-                }
-
-                let tools = makeTools(
-                    workingDirectory: filesDir,
-                    locationController: locationController,
-                    subAgentCallback: subAgentCallback
+                let conversation = try await setupClientAndConversation(
+                    conversationId: metadata.id,
+                    filesDir: filesDir
                 )
-                let client = try await makeClaudeClient(systemPrompt: systemPrompt, filesDir: filesDir, tools: tools)
-
-                let conversation = await Conversation(client: client, id: metadata.id)
-                holder.conversation = conversation
 
                 let sessionData = try Data(contentsOf: sessionURL)
                 try await conversation.client.importSession(from: sessionData)

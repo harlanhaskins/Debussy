@@ -1,8 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Debussy needs access to your location to provide location-based assistance and answer questions about your current location.</string>
-</dict>
+<dict/>
 </plist>

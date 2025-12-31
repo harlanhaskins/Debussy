@@ -8,6 +8,7 @@
 import Foundation
 import SwiftClaude
 import SwiftUI
+import System
 import Textual
 import UniformTypeIdentifiers
 import WebKit
@@ -92,7 +93,7 @@ struct ToolUseCard: View {
         Array(execution.subToolExecutions.suffix(3))
     }
 
-    var filePath: String? {
+    var filePath: FilePath? {
         if let fileInput = execution.decodedInput as? FileToolInput {
             return fileInput.filePath
         }
@@ -355,8 +356,7 @@ struct WebCanvasExecutionDetailContent: View {
                         }
 
                         let fullPath = String(firstLine[pathStart...])
-                        let relativePath = makePathRelative(fullPath)
-                        var result = "Created canvas at \(relativePath)"
+                        var result = "Created canvas at \(fullPath)"
                         if let aspectLine = execution.output.split(separator: "\n").dropFirst().first {
                             result += "\n\(aspectLine)"
                         }
@@ -433,10 +433,10 @@ struct SubAgentExecutionDetailContent: View {
 
                                 // Stats
                                 HStack(spacing: 16) {
-                                    Label("\(result.turnCount) turns", systemImage: "arrow.triangle.2.circlepath")
+                                    Label("^[\(result.turnCount) turn](inflect: true)", systemImage: "arrow.triangle.2.circlepath")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
-                                    Label("\(result.toolCallCount) tools", systemImage: "wrench.adjustable")
+                                    Label("^[\(result.toolCallCount) tool](inflect: true)", systemImage: "wrench.adjustable")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -475,7 +475,7 @@ struct SubAgentExecutionDetailContent: View {
 struct FileToolExecutionDetailContent: View {
     var execution: ToolExecution
     @Environment(\.claudeClient) private var client
-    @State private var filePath: String?
+    @State private var filePath: FilePath?
     @State private var fileContents: String?
 
     var outputLabel: String {
@@ -489,7 +489,7 @@ struct FileToolExecutionDetailContent: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("File Path")
                         .font(.headline)
-                    Text(makePathRelative(filePath))
+                    Text(filePath.string)
                         .font(.body)
                         .fontDesign(.monospaced)
                         .textSelection(.enabled)
@@ -532,7 +532,7 @@ struct FileToolExecutionDetailContent: View {
             filePath = input.filePath
 
             do {
-                let contents = try String(contentsOfFile: input.filePath, encoding: .utf8)
+                let contents = try String(contentsOf: URL(filePath: input.filePath)!, encoding: .utf8)
                 fileContents = contents
             } catch {
                 fileContents = "Error reading file: \(error.localizedDescription)"
@@ -720,22 +720,19 @@ struct WebCanvasView: View {
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.displayScale) var displayScale
     @State private var aspectRatio: CGFloat = 1.0
-    @State private var showingFullScreen = false
 
     var borderColor: Color {
         colorScheme == .dark ? .darkBorder : .lightBorder
     }
 
-    var filePath: String? {
-        // Extract file path from output (format: "Created canvas at <path>\n...")
-        guard let line = execution.output.split(separator: "\n").first,
-              let pathStart = line.range(of: "Created canvas at ")?.upperBound else {
+    var filePath: FilePath? {
+        guard let output = execution.decodedOutput as? WebCanvasOutput else {
             return nil
         }
-        return String(line[pathStart...])
+        return output.filePath
     }
 
-    var body: some View {
+    var canvasPreview: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Title bar
             HStack {
@@ -749,25 +746,18 @@ struct WebCanvasView: View {
             }
             .padding(12)
             .background(Color.secondary.opacity(0.05))
-            .contentShape(Rectangle())
-            .onTapGesture {
-                showingFullScreen = true
-            }
 
             Divider()
 
             // Canvas preview
-            if let path = filePath {
-                let url = URL(filePath: path)
-                WebView(url: url)
+            if let filePath = filePath {
+                WebView(url: URL(filePath: filePath)!)
                     .aspectRatio(aspectRatio, contentMode: .fit)
                     .frame(maxWidth: 600, maxHeight: 400)
                     .task {
-                        // Parse aspect ratio from output
-                        if let aspectLine = execution.output.split(separator: "\n").first(where: { $0.contains("Aspect ratio:") }),
-                           let ratioStart = aspectLine.range(of: "Aspect ratio: ")?.upperBound {
-                            let ratioString = String(aspectLine[ratioStart...])
-                            let components = ratioString.split(separator: ":").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+                        // Parse aspect ratio from structured output
+                        if let output = execution.decodedOutput as? WebCanvasOutput {
+                            let components = output.aspectRatio.split(separator: ":").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
                             if components.count == 2, components[1] > 0 {
                                 aspectRatio = components[0] / components[1]
                             }
@@ -784,30 +774,32 @@ struct WebCanvasView: View {
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
         }
-        .sheet(isPresented: $showingFullScreen) {
-            WebCanvasFullScreenView(execution: execution, aspectRatio: aspectRatio)
+    }
+
+    var body: some View {
+        NavigationLink {
+            WebCanvasFullScreenView(execution: execution)
+        } label: {
+            canvasPreview
         }
+        .buttonStyle(.plain)
     }
 }
 
 struct WebCanvasFullScreenView: View {
     var execution: ToolExecution
-    var aspectRatio: CGFloat
     @Environment(\.dismiss) var dismiss
 
-    var filePath: String? {
-        guard let line = execution.output.split(separator: "\n").first,
-              let pathStart = line.range(of: "Created canvas at ")?.upperBound else {
+    var filePath: FilePath? {
+        guard let output = execution.decodedOutput as? WebCanvasOutput else {
             return nil
         }
-        return String(line[pathStart...])
+        return output.filePath
     }
 
     var body: some View {
-        if let path = filePath {
-            let url = URL(filePath: path)
-            WebView(url: url)
-                .aspectRatio(aspectRatio, contentMode: .fit)
+        if let filePath = filePath {
+            WebView(url: URL(filePath: filePath)!)
                 .navigationTitle("WebCanvas")
                 .toolbarTitleDisplayMode(.inlineLarge)
         } else {
@@ -946,13 +938,9 @@ struct MapSearchFullScreenView: View {
 // MARK: - File Tool Menu
 
 struct FileToolMenu: View {
-    let filePath: String
+    let filePath: FilePath
     @State private var fileContents: String = ""
     @State private var isLoadingFile = false
-
-    var fileURL: URL {
-        URL(fileURLWithPath: filePath)
-    }
 
     var body: some View {
         Menu {
@@ -965,7 +953,7 @@ struct FileToolMenu: View {
             Button {
                 #if os(macOS)
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(filePath, forType: .url)
+                NSPasteboard.general.setString(filePath.string, forType: .string)
                 #else
                 UIPasteboard.general.url = URL(filePath: filePath)
                 #endif
@@ -973,7 +961,7 @@ struct FileToolMenu: View {
                 Label("Copy Path", systemImage: "doc.on.doc")
             }
 
-            ShareLink(item: fileURL) {
+            ShareLink(item: URL(filePath: filePath)!) {
                 Label("Share", systemImage: "square.and.arrow.up")
             }
         } label: {
@@ -992,7 +980,7 @@ struct FileToolMenu: View {
 // MARK: - File Viewer
 
 struct FileViewerView: View {
-    let filePath: String
+    let filePath: FilePath
     @State private var fileContents: String = ""
     @State private var isLoading = true
     @State private var errorMessage: String?
@@ -1016,7 +1004,7 @@ struct FileViewerView: View {
                     .disabled(true)
             }
         }
-        .navigationTitle(URL(fileURLWithPath: filePath).lastPathComponent)
+        .navigationTitle(filePath.lastComponent?.string ?? "File")
         .task {
             await loadFile()
         }
@@ -1024,7 +1012,7 @@ struct FileViewerView: View {
 
     private func loadFile() async {
         do {
-            let contents = try String(contentsOfFile: filePath, encoding: .utf8)
+            let contents = try String(contentsOf: URL(filePath: filePath)!, encoding: .utf8)
             fileContents = contents
             isLoading = false
         } catch {
@@ -1033,3 +1021,47 @@ struct FileViewerView: View {
         }
     }
 }
+
+// MARK: - WebView
+
+#if canImport(UIKit)
+import WebKit
+
+struct WebView: UIViewRepresentable {
+    let url: URL
+
+    func makeUIView(context: Context) -> WKWebView {
+        WKWebView()
+    }
+
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        // For file URLs, use loadFileURL with read access to the parent directory
+        if url.isFileURL {
+            let readAccessURL = url.deletingLastPathComponent()
+            webView.loadFileURL(url, allowingReadAccessTo: readAccessURL)
+        } else {
+            webView.load(URLRequest(url: url))
+        }
+    }
+}
+#elseif canImport(AppKit)
+import WebKit
+
+struct WebView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> WKWebView {
+        WKWebView()
+    }
+
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        // For file URLs, use loadFileURL with read access to the parent directory
+        if url.isFileURL {
+            let readAccessURL = url.deletingLastPathComponent()
+            webView.loadFileURL(url, allowingReadAccessTo: readAccessURL)
+        } else {
+            webView.load(URLRequest(url: url))
+        }
+    }
+}
+#endif
