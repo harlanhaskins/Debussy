@@ -6,12 +6,24 @@
 //
 
 import Foundation
+import System
+
+// MARK: - File Attachment
+
+struct FileAttachment: Identifiable, Equatable {
+    let id: UUID
+    let path: FilePath
+    let fileName: String
+    let mimeType: String
+    let fileSize: Int
+}
 
 // MARK: - Message Content
 
 enum MessageContent: Identifiable {
     case text(String)
     case toolExecution(ToolExecution)
+    case fileAttachment(FileAttachment)
 
     var id: String {
         switch self {
@@ -19,6 +31,8 @@ enum MessageContent: Identifiable {
             return "text_\(content.prefix(50).hashValue)"
         case .toolExecution(let execution):
             return "tool_\(execution.id)"
+        case .fileAttachment(let attachment):
+            return "file_\(attachment.id.uuidString)"
         }
     }
 }

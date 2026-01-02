@@ -15,10 +15,20 @@ import Collections
 final class Conversation: Identifiable {
     let id: UUID
     let client: ClaudeClient
+    let conversationDirectory: FilePath
+    private let fileManager: FileAttachmentManager
 
     init(client: ClaudeClient, id: UUID = UUID()) async {
         self.client = client
         self.id = id
+
+        // Compute conversation directory
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        self.conversationDirectory = FilePath(documentsDirectory.path).appending("conversations").appending(id.uuidString)
+
+        // Initialize file manager
+        self.fileManager = FileAttachmentManager(conversationDirectory: conversationDirectory)
+
         await setupHooks()
     }
 
@@ -152,16 +162,44 @@ final class Conversation: Identifiable {
 
     // MARK: - Messaging
 
-    func sendMessage(text: String) async throws {
+    func sendMessage(text: String, attachments: [FileAttachment] = []) async throws {
         let userMessageID = UUID()
+
+        // Build Sonata message content (for display)
+        var displayContent: [MessageContent] = [.text(text)]
+        displayContent.append(contentsOf: attachments.map { .fileAttachment($0) })
+
         messages[userMessageID] = ConversationMessage(
-            textContent: text,
+            content: displayContent,
             id: userMessageID,
             kind: .user
         )
 
+        // Build SwiftClaude content blocks (for API)
+        let claudeMessage: SwiftClaude.UserMessage
+        if attachments.isEmpty {
+            // Simple text message
+            claudeMessage = SwiftClaude.UserMessage(content: text)
+        } else {
+            // Multimodal message with text and attachments
+            var contentBlocks: [SwiftClaude.ContentBlock] = [.text(SwiftClaude.TextBlock(text: text))]
+
+            // Load files and create content blocks
+            for attachment in attachments {
+                do {
+                    let contentBlock = try await fileManager.createContentBlock(for: attachment)
+                    contentBlocks.append(contentBlock)
+                } catch {
+                    print("Error loading attachment \(attachment.fileName): \(error)")
+                    // Continue with other attachments
+                }
+            }
+
+            claudeMessage = SwiftClaude.UserMessage(content: .blocks(contentBlocks))
+        }
+
         do {
-            for await message in await client.query(text) {
+            for await message in await client.query(claudeMessage) {
                 try Task.checkCancellation()
 
                 if case .assistant(let assistantMsg) = message {
@@ -243,21 +281,16 @@ final class Conversation: Identifiable {
 
     // MARK: - Persistence
 
-    private var documentsDirectory: FilePath {
-        let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return FilePath(url.path)
-    }
-
-    private var conversationDirectory: FilePath {
-        documentsDirectory.appending("conversations").appending(id.uuidString)
-    }
-
     private var sessionFilePath: FilePath {
         conversationDirectory.appending("session.json")
     }
 
     private var toolOutputsFilePath: FilePath {
         conversationDirectory.appending("tool_outputs.json")
+    }
+
+    private var messagesFilePath: FilePath {
+        conversationDirectory.appending("messages.json")
     }
 
     var lastMessageTimestamp: Date {
@@ -346,6 +379,92 @@ final class Conversation: Identifiable {
         }
     }
 
+    private func saveMessages() throws {
+        var persistedMessages: [PersistedMessage] = []
+
+        for (_, message) in messages {
+            var persistedContent: [PersistedMessageContent] = []
+
+            for content in message.content {
+                switch content {
+                case .text(let text):
+                    persistedContent.append(.text(text))
+
+                case .toolExecution(let execution):
+                    persistedContent.append(.toolExecution(execution.id))
+
+                case .fileAttachment(let attachment):
+                    persistedContent.append(.fileAttachment(PersistedFileAttachment(from: attachment, conversationDirectory: conversationDirectory)))
+                }
+            }
+
+            let kindString: String
+            switch message.kind {
+            case .user: kindString = "user"
+            case .assistant: kindString = "assistant"
+            case .error: kindString = "error"
+            }
+
+            persistedMessages.append(PersistedMessage(
+                id: message.id,
+                content: persistedContent,
+                kind: kindString,
+                timestamp: message.timestamp,
+                resultedInError: message.resultedInError
+            ))
+        }
+
+        let manifest = MessagesManifest(messages: persistedMessages)
+        try saveJSON(manifest, to: messagesFilePath)
+    }
+
+    private func loadMessages() throws {
+        guard FileManager.default.fileExists(atPath: messagesFilePath.string) else {
+            return
+        }
+
+        let manifest: MessagesManifest = try loadJSON(from: messagesFilePath)
+
+        messages.removeAll()
+
+        for persisted in manifest.messages {
+            var messageContent: [MessageContent] = []
+
+            for content in persisted.content {
+                switch content {
+                case .text(let text):
+                    messageContent.append(.text(text))
+
+                case .toolExecution(let executionId):
+                    if let execution = toolExecutions[executionId] {
+                        messageContent.append(.toolExecution(execution))
+                    }
+
+                case .fileAttachment(let persistedAttachment):
+                    messageContent.append(.fileAttachment(persistedAttachment.toFileAttachment(conversationDirectory: conversationDirectory)))
+                }
+            }
+
+            let kind: ConversationMessage.Kind
+            switch persisted.kind {
+            case "user": kind = .user
+            case "assistant": kind = .assistant
+            case "error": kind = .error
+            default: kind = .user
+            }
+
+            var message = ConversationMessage(
+                content: messageContent,
+                id: persisted.id,
+                kind: kind
+            )
+            message.timestamp = persisted.timestamp
+            message.resultedInError = persisted.resultedInError
+
+            messages[persisted.id] = message
+        }
+    }
+
     func saveSession() async throws {
         try FileManager.default.createDirectory(
             at: URL(filePath: conversationDirectory)!,
@@ -358,11 +477,14 @@ final class Conversation: Identifiable {
         // Save tool outputs
         try saveToolOutputs()
 
+        // Save messages
+        try saveMessages()
+
         try await updateConversationsManifest()
     }
 
     private func updateConversationsManifest() async throws {
-        let manifestPath = documentsDirectory.appending("conversations").appending("conversations.json")
+        let manifestPath = conversationDirectory.removingLastComponent().appending("conversations.json")
         let manifestURL = URL(filePath: manifestPath)!
 
         var manifest: ConversationsManifest
@@ -392,18 +514,49 @@ final class Conversation: Identifiable {
     }
 
     func rebuildMessagesFromHistory() async {
+        // Try to load persisted messages first
+        try? loadToolOutputs()
+
+        if (try? loadMessages()) != nil {
+            // Successfully loaded messages from file
+            return
+        }
+
+        // Fall back to rebuilding from SwiftClaude history
         let history = await client.history
         messages.removeAll()
-
-        // Load persisted tool outputs first
-        try? loadToolOutputs()
 
         for message in history {
             switch message {
             case .user(let userMsg):
                 let messageID = UUID()
+                var displayContent: [MessageContent] = []
+
+                switch userMsg.content {
+                case .text(let text):
+                    displayContent = [.text(text)]
+
+                case .blocks(let blocks):
+                    for block in blocks {
+                        switch block {
+                        case .text(let textBlock):
+                            displayContent.append(.text(textBlock.text))
+
+                        case .image, .document:
+                            // Note: We don't have the FileAttachment metadata here
+                            // since it's stored in the attachments directory
+                            // For now, just skip displaying file attachments on reload
+                            // TODO: Persist FileAttachment metadata separately
+                            break
+
+                        default:
+                            break
+                        }
+                    }
+                }
+
                 messages[messageID] = ConversationMessage(
-                    textContent: userMsg.content,
+                    content: displayContent,
                     id: messageID,
                     kind: .user
                 )

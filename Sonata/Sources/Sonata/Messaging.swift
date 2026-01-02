@@ -69,6 +69,12 @@ struct MessageView: View {
                     } else {
                         ToolUseCard(execution: execution)
                     }
+
+                case .fileAttachment(let attachment):
+                    // TODO: Display file attachment
+                    Text("File: \(attachment.fileName)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
