@@ -2,9 +2,12 @@ import SwiftUI
 import SwiftClaude
 import UniformTypeIdentifiers
 import System
+import PhotosUI
 
 #if canImport(UIKit)
 import UIKit
+#elseif canImport(AppKit)
+import AppKit
 #endif
 
 // MARK: - JSON File Utilities
@@ -44,6 +47,8 @@ struct ConversationView: View {
     @State var sendingMessageText: String?
     @State var selectedAttachments: [FileAttachment] = []
     @State var showingFilePicker = false
+    @State var selectedPhotoItems: [PhotosPickerItem] = []
+    @State var showingCamera = false
 
     var body: some View {
         GeometryReader { proxy in
@@ -90,11 +95,29 @@ struct ConversationView: View {
                 }
 
                 HStack(alignment: .bottom, spacing: 8) {
-                    // Attachment button
-                    Button {
-                        showingFilePicker = true
+                    // Attachment menu button
+                    Menu {
+                        PhotosPicker(
+                            selection: $selectedPhotoItems,
+                            maxSelectionCount: 10,
+                            matching: .images
+                        ) {
+                            Label("Choose from Photos", systemImage: "photo.on.rectangle")
+                        }
+
+                        Button {
+                            showingCamera = true
+                        } label: {
+                            Label("Take Photo", systemImage: "camera")
+                        }
+
+                        Button {
+                            showingFilePicker = true
+                        } label: {
+                            Label("Choose File", systemImage: "folder")
+                        }
                     } label: {
-                        Label("Attach file", systemImage: "paperclip")
+                        Label("Attach", systemImage: "plus")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                     .buttonStyle(.glass)
@@ -155,6 +178,14 @@ struct ConversationView: View {
         ) { result in
             handleFileSelection(result)
         }
+        .onChange(of: selectedPhotoItems) { oldValue, newValue in
+            handlePhotoSelection(newValue)
+        }
+        .fullScreenCover(isPresented: $showingCamera) {
+            CameraView { image in
+                handleCapturedPhoto(image)
+            }
+        }
     }
 
     func sendCurrentMessage() {
@@ -203,6 +234,107 @@ struct ConversationView: View {
             print("File selection failed: \(error)")
         }
     }
+
+    func handlePhotoSelection(_ items: [PhotosPickerItem]) {
+        Task {
+            for item in items {
+                do {
+                    // Load image data
+                    guard let data = try await item.loadTransferable(type: Data.self) else {
+                        print("Failed to load photo data")
+                        continue
+                    }
+
+                    // Save to temporary file
+                    let tempURL = FileManager.default.temporaryDirectory
+                        .appendingPathComponent(UUID().uuidString)
+                        .appendingPathExtension("jpg")
+                    try data.write(to: tempURL)
+
+                    // Copy to conversation directory
+                    let attachment = try await conversation.fileManager.copyFile(
+                        from: tempURL,
+                        toMessageId: UUID()
+                    )
+                    selectedAttachments.append(attachment)
+
+                    // Clean up temp file
+                    try? FileManager.default.removeItem(at: tempURL)
+                } catch {
+                    print("Failed to add photo: \(error)")
+                }
+            }
+            // Clear selection
+            selectedPhotoItems = []
+        }
+    }
+
+    #if canImport(UIKit)
+    func handleCapturedPhoto(_ image: UIImage) {
+        Task {
+            do {
+                // Convert to JPEG data
+                guard let data = image.jpegData(compressionQuality: 0.9) else {
+                    print("Failed to convert image to JPEG")
+                    return
+                }
+
+                // Save to temporary file
+                let tempURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("jpg")
+                try data.write(to: tempURL)
+
+                // Copy to conversation directory
+                let attachment = try await conversation.fileManager.copyFile(
+                    from: tempURL,
+                    toMessageId: UUID()
+                )
+                selectedAttachments.append(attachment)
+
+                // Clean up temp file
+                try? FileManager.default.removeItem(at: tempURL)
+            } catch {
+                print("Failed to save captured photo: \(error)")
+            }
+        }
+    }
+    #elseif canImport(AppKit)
+    func handleCapturedPhoto(_ image: NSImage) {
+        Task {
+            do {
+                // Convert to JPEG data
+                guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                    print("Failed to convert image")
+                    return
+                }
+                let bitmap = NSBitmapImageRep(cgImage: cgImage)
+                guard let data = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.9]) else {
+                    print("Failed to convert image to JPEG")
+                    return
+                }
+
+                // Save to temporary file
+                let tempURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("jpg")
+                try data.write(to: tempURL)
+
+                // Copy to conversation directory
+                let attachment = try await conversation.fileManager.copyFile(
+                    from: tempURL,
+                    toMessageId: UUID()
+                )
+                selectedAttachments.append(attachment)
+
+                // Clean up temp file
+                try? FileManager.default.removeItem(at: tempURL)
+            } catch {
+                print("Failed to save captured photo: \(error)")
+            }
+        }
+    }
+    #endif
 }
 
 // MARK: - Attachment Preview Chip
@@ -502,3 +634,72 @@ public struct ContentView: View {
         showingSettings = true
     }
 }
+
+// MARK: - Camera View
+
+#if canImport(UIKit)
+struct CameraView: UIViewControllerRepresentable {
+    @Environment(\.dismiss) var dismiss
+    let onCapture: (UIImage) -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: CameraView
+
+        init(_ parent: CameraView) {
+            self.parent = parent
+        }
+
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.onCapture(image)
+            }
+            parent.dismiss()
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.dismiss()
+        }
+    }
+}
+#elseif canImport(AppKit)
+// macOS camera view - simplified implementation
+struct CameraView: View {
+    @Environment(\.dismiss) var dismiss
+    let onCapture: (NSImage) -> Void
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "camera")
+                .font(.system(size: 60))
+                .foregroundStyle(.secondary)
+
+            Text("Camera not available")
+                .font(.title3)
+
+            Text("Camera capture is not supported on macOS")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            Button("Close") {
+                dismiss()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(40)
+    }
+}
+#endif
