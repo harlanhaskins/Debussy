@@ -1079,6 +1079,12 @@ struct FileAttachmentView: View {
     @Environment(\.displayScale) var displayScale
     @State private var showingFullScreen = false
 
+    #if canImport(UIKit)
+    @State private var loadedImage: UIImage?
+    #elseif canImport(AppKit)
+    @State private var loadedImage: NSImage?
+    #endif
+
     var borderColor: Color {
         colorScheme == .dark ? .darkBorder : .lightBorder
     }
@@ -1101,7 +1107,7 @@ struct FileAttachmentView: View {
 
     @ViewBuilder
     private var imageView: some View {
-        if let image = loadImage() {
+        if let image = loadedImage {
             #if canImport(UIKit)
             Image(uiImage: image)
                 .resizable()
@@ -1116,24 +1122,22 @@ struct FileAttachmentView: View {
 
     var body: some View {
         Group {
-            if isImage {
+            if isImage, let image = loadedImage {
                 // Image preview
-                if let image = loadImage() {
-                    imageView
-                        .frame(maxWidth: maxWidth, maxHeight: 300)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 8)
-                                .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
-                        }
-                        .onTapGesture {
-                            showingFullScreen = true
-                        }
-                        .sheet(isPresented: $showingFullScreen) {
-                            ImageFullScreenView(image: image, fileName: attachment.fileName)
-                        }
-                }
-            } else {
+                imageView
+                    .frame(maxWidth: maxWidth, maxHeight: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
+                    }
+                    .onTapGesture {
+                        showingFullScreen = true
+                    }
+                    .sheet(isPresented: $showingFullScreen) {
+                        ImageFullScreenView(image: image, fileName: attachment.fileName)
+                    }
+            } else if !isImage {
                 // Document icon
                 HStack(spacing: 12) {
                     Image(systemName: iconName)
@@ -1162,21 +1166,28 @@ struct FileAttachmentView: View {
             }
         }
         .frame(maxWidth: messageKind == .user ? maxWidth : .infinity, alignment: messageKind == .user ? .trailing : .leading)
+        .onAppear {
+            if isImage {
+                loadImage()
+            }
+        }
     }
 
     #if canImport(UIKit)
-    private func loadImage() -> UIImage? {
-        guard let data = try? Data(contentsOf: URL(filePath: attachment.path)!) else {
-            return nil
+    private func loadImage() {
+        guard let data = try? Data(contentsOf: URL(filePath: attachment.path)!),
+              let image = UIImage(data: data) else {
+            return
         }
-        return UIImage(data: data)
+        loadedImage = image
     }
     #elseif canImport(AppKit)
-    private func loadImage() -> NSImage? {
-        guard let data = try? Data(contentsOf: URL(filePath: attachment.path)!) else {
-            return nil
+    private func loadImage() {
+        guard let data = try? Data(contentsOf: URL(filePath: attachment.path)!),
+              let image = NSImage(data: data) else {
+            return
         }
-        return NSImage(data: data)
+        loadedImage = image
     }
     #endif
 
