@@ -105,11 +105,13 @@ struct ConversationView: View {
                             Label("Choose from Photos", systemImage: "photo.on.rectangle")
                         }
 
+                        #if canImport(UIKit)
                         Button {
                             showingCamera = true
                         } label: {
                             Label("Take Photo", systemImage: "camera")
                         }
+                        #endif
 
                         Button {
                             showingFilePicker = true
@@ -181,11 +183,13 @@ struct ConversationView: View {
         .onChange(of: selectedPhotoItems) { oldValue, newValue in
             handlePhotoSelection(newValue)
         }
+        #if canImport(UIKit)
         .fullScreenCover(isPresented: $showingCamera) {
             CameraView { image in
                 handleCapturedPhoto(image)
             }
         }
+        #endif
     }
 
     func sendCurrentMessage() {
@@ -672,34 +676,6 @@ struct CameraView: UIViewControllerRepresentable {
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             parent.dismiss()
         }
-    }
-}
-#elseif canImport(AppKit)
-// macOS camera view - simplified implementation
-struct CameraView: View {
-    @Environment(\.dismiss) var dismiss
-    let onCapture: (NSImage) -> Void
-
-    var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "camera")
-                .font(.system(size: 60))
-                .foregroundStyle(.secondary)
-
-            Text("Camera not available")
-                .font(.title3)
-
-            Text("Camera capture is not supported on macOS")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-
-            Button("Close") {
-                dismiss()
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        .padding(40)
     }
 }
 #endif

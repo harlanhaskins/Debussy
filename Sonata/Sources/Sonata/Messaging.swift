@@ -71,7 +71,7 @@ struct MessageView: View {
                     }
 
                 case .fileAttachment(let attachment):
-                    FileAttachmentView(attachment: attachment)
+                    FileAttachmentView(attachment: attachment, messageKind: message.kind)
                 }
             }
         }
@@ -706,6 +706,7 @@ struct MessageBubble<Content: View>: View {
         content
             .font(.body)
             .fontDesign(isSent ? .default : .serif)
+            .multilineTextAlignment(isSent ? .trailing : .leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(background, in: .rect(cornerRadius: 13))
@@ -1073,6 +1074,7 @@ struct WebView: NSViewRepresentable {
 
 struct FileAttachmentView: View {
     let attachment: FileAttachment
+    let messageKind: ConversationMessage.Kind
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.displayScale) var displayScale
     @State private var showingFullScreen = false
@@ -1093,71 +1095,73 @@ struct FileAttachmentView: View {
         }
     }
 
+    var maxWidth: CGFloat {
+        messageKind == .user ? 300 : 400
+    }
+
+    @ViewBuilder
+    private var imageView: some View {
+        if let image = loadImage() {
+            #if canImport(UIKit)
+            Image(uiImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+            #elseif canImport(AppKit)
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+            #endif
+        }
+    }
+
     var body: some View {
-        if isImage {
-            // Image preview
-            if let image = loadImage() {
-                #if canImport(UIKit)
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: 400, maxHeight: 300)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
-                    }
-                    .onTapGesture {
-                        showingFullScreen = true
-                    }
-                    .sheet(isPresented: $showingFullScreen) {
-                        ImageFullScreenView(image: image, fileName: attachment.fileName)
-                    }
-                #elseif canImport(AppKit)
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: 400, maxHeight: 300)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
-                    }
-                    .onTapGesture {
-                        showingFullScreen = true
-                    }
-                    .sheet(isPresented: $showingFullScreen) {
-                        ImageFullScreenView(image: image, fileName: attachment.fileName)
-                    }
-                #endif
-            }
-        } else {
-            // Document icon
-            HStack(spacing: 12) {
-                Image(systemName: iconName)
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(attachment.fileName)
-                        .font(.subheadline)
-                        .lineLimit(1)
-
-                    Text(formatFileSize(attachment.fileSize))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        Group {
+            if isImage {
+                // Image preview
+                if let image = loadImage() {
+                    imageView
+                        .frame(maxWidth: maxWidth, maxHeight: 300)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
+                        }
+                        .onTapGesture {
+                            showingFullScreen = true
+                        }
+                        .sheet(isPresented: $showingFullScreen) {
+                            ImageFullScreenView(image: image, fileName: attachment.fileName)
+                        }
                 }
+            } else {
+                // Document icon
+                HStack(spacing: 12) {
+                    Image(systemName: iconName)
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
 
-                Spacer()
-            }
-            .padding(12)
-            .frame(maxWidth: 400)
-            .background(Color.secondary.opacity(0.1), in: .rect(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(attachment.fileName)
+                            .font(.subheadline)
+                            .lineLimit(1)
+
+                        Text(formatFileSize(attachment.fileSize))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+                }
+                .padding(12)
+                .frame(maxWidth: maxWidth)
+                .background(Color.secondary.opacity(0.1), in: .rect(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
+                }
             }
         }
+        .frame(maxWidth: messageKind == .user ? maxWidth : .infinity, alignment: messageKind == .user ? .trailing : .leading)
     }
 
     #if canImport(UIKit)
