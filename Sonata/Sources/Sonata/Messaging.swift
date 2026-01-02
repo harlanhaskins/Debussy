@@ -71,10 +71,7 @@ struct MessageView: View {
                     }
 
                 case .fileAttachment(let attachment):
-                    // TODO: Display file attachment
-                    Text("File: \(attachment.fileName)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    FileAttachmentView(attachment: attachment)
                 }
             }
         }
@@ -1067,6 +1064,167 @@ struct WebView: NSViewRepresentable {
             webView.loadFileURL(url, allowingReadAccessTo: readAccessURL)
         } else {
             webView.load(URLRequest(url: url))
+        }
+    }
+}
+#endif
+
+// MARK: - File Attachment View
+
+struct FileAttachmentView: View {
+    let attachment: FileAttachment
+    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.displayScale) var displayScale
+    @State private var showingFullScreen = false
+
+    var borderColor: Color {
+        colorScheme == .dark ? .darkBorder : .lightBorder
+    }
+
+    var isImage: Bool {
+        attachment.mimeType.hasPrefix("image/")
+    }
+
+    var iconName: String {
+        if attachment.mimeType == "application/pdf" {
+            return "doc.richtext"
+        } else {
+            return "doc"
+        }
+    }
+
+    var body: some View {
+        if isImage {
+            // Image preview
+            if let image = loadImage() {
+                #if canImport(UIKit)
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: 400, maxHeight: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
+                    }
+                    .onTapGesture {
+                        showingFullScreen = true
+                    }
+                    .sheet(isPresented: $showingFullScreen) {
+                        ImageFullScreenView(image: image, fileName: attachment.fileName)
+                    }
+                #elseif canImport(AppKit)
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: 400, maxHeight: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
+                    }
+                    .onTapGesture {
+                        showingFullScreen = true
+                    }
+                    .sheet(isPresented: $showingFullScreen) {
+                        ImageFullScreenView(image: image, fileName: attachment.fileName)
+                    }
+                #endif
+            }
+        } else {
+            // Document icon
+            HStack(spacing: 12) {
+                Image(systemName: iconName)
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(attachment.fileName)
+                        .font(.subheadline)
+                        .lineLimit(1)
+
+                    Text(formatFileSize(attachment.fileSize))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+            .padding(12)
+            .frame(maxWidth: 400)
+            .background(Color.secondary.opacity(0.1), in: .rect(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
+            }
+        }
+    }
+
+    #if canImport(UIKit)
+    private func loadImage() -> UIImage? {
+        guard let data = try? Data(contentsOf: URL(filePath: attachment.path)!) else {
+            return nil
+        }
+        return UIImage(data: data)
+    }
+    #elseif canImport(AppKit)
+    private func loadImage() -> NSImage? {
+        guard let data = try? Data(contentsOf: URL(filePath: attachment.path)!) else {
+            return nil
+        }
+        return NSImage(data: data)
+    }
+    #endif
+
+    private func formatFileSize(_ bytes: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
+}
+
+#if canImport(UIKit)
+struct ImageFullScreenView: View {
+    let image: UIImage
+    let fileName: String
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        NavigationView {
+            Image(uiImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .navigationTitle(fileName)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") {
+                            dismiss()
+                        }
+                    }
+                }
+        }
+    }
+}
+#elseif canImport(AppKit)
+struct ImageFullScreenView: View {
+    let image: NSImage
+    let fileName: String
+    @Environment(\.dismiss) var dismiss
+
+    var body: some View {
+        NavigationView {
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .navigationTitle(fileName)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") {
+                            dismiss()
+                        }
+                    }
+                }
         }
     }
 }

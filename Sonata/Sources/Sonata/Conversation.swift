@@ -16,7 +16,7 @@ final class Conversation: Identifiable {
     let id: UUID
     let client: ClaudeClient
     let conversationDirectory: FilePath
-    private let fileManager: FileAttachmentManager
+    let fileManager: FileAttachmentManager
 
     init(client: ClaudeClient, id: UUID = UUID()) async {
         self.client = client
