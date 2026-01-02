@@ -41,6 +41,9 @@ final class Conversation: Identifiable {
     // Session for managing active tool executions
     private let executionSession = ToolExecutionSession()
 
+    // Track files currently being uploaded (by file path)
+    var uploadingFiles: Set<String> = []
+
     /// Title for the conversation based on the first user message
     var title: String {
         guard let firstUserMessage = messages.values.first(where: { $0.kind == .user }) else {
@@ -66,6 +69,16 @@ final class Conversation: Identifiable {
 
         await client.addHook(.afterToolExecution) { [weak self] (context: AfterToolExecutionContext) async in
             await self?.handleAfterToolExecution(context)
+        }
+
+        // Register hook for file upload start
+        await client.addHook(.beforeFileUpload) { [weak self] (context: BeforeFileUploadContext) async in
+            await self?.handleBeforeFileUpload(context)
+        }
+
+        // Register hook for file upload completion
+        await client.addHook(.afterFileUpload) { [weak self] (context: AfterFileUploadContext) async in
+            await self?.handleAfterFileUpload(context)
         }
     }
 
@@ -149,6 +162,14 @@ final class Conversation: Identifiable {
         try? await saveSession()
     }
 
+    private func handleBeforeFileUpload(_ context: BeforeFileUploadContext) {
+        uploadingFiles.insert(context.fileInfo.filePath)
+    }
+
+    private func handleAfterFileUpload(_ context: AfterFileUploadContext) {
+        uploadingFiles.remove(context.fileInfo.filePath)
+    }
+
     // Handle live sub-tool updates from SubAgent
     func handleSubAgentToolCall(taskId: String, toolName: String, summary: String) {
         guard let parentExecutionId = executionSession.parentExecutionId(forSubAgentTask: taskId),
@@ -158,6 +179,35 @@ final class Conversation: Identifiable {
         }
 
         session.addSubToolExecution(id: UUID().uuidString, name: toolName, input: summary)
+    }
+
+    // MARK: - Tool History
+
+    /// Returns tool execution history in chronological order
+    func toolExecutionHistory() -> [SwiftClaude.ToolExecutionInfo] {
+        // Collect tool executions in order by iterating through messages
+        var history: [SwiftClaude.ToolExecutionInfo] = []
+
+        for (_, message) in messages {
+            for content in message.content {
+                if case .toolExecution(let execution) = content,
+                   execution.isComplete {
+                    // Use decodedOutput if available (structured outputs), otherwise fall back to string output
+                    let output: (any ToolOutput)? = execution.decodedOutput ?? execution.output
+
+                    let info = SwiftClaude.ToolExecutionInfo(
+                        id: execution.id,
+                        name: execution.name,
+                        summary: execution.input,
+                        input: execution.decodedInput,
+                        output: output
+                    )
+                    history.append(info)
+                }
+            }
+        }
+
+        return history
     }
 
     // MARK: - Messaging

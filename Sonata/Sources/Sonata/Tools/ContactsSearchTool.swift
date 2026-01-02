@@ -18,7 +18,62 @@ public struct ContactsSearchTool: Tool {
     private let contactsController: ContactsController
 
     public var description: String {
-        "Search the user's contacts by name, email, phone number, or address. Returns contact information including phone numbers, email addresses, and postal addresses. Area codes in phone numbers can be used to perform location-specific queries when postal addresses are not available."
+        """
+        Search contacts using CEL (Common Expression Language) expressions. Write queries that filter contacts based on their fields.
+
+        AVAILABLE FIELDS:
+        - displayName: string (full name, e.g., "John Smith")
+        - givenName: string or null (first name)
+        - familyName: string or null (last name)
+        - phoneNumbers: list of {number: string, label?: string}
+        - emailAddresses: list of strings
+        - postalAddresses: list of {street?, city?, state?, postalCode?, country?, formattedAddress: string, label?: string}
+
+        OPERATORS:
+        - Comparison: ==, !=, <, <=, >, >=
+        - Logical: && (and), || (or), ! (not)
+        - Membership: in (check if value is in list)
+        - Ternary: condition ? trueValue : falseValue
+
+        LIST MACROS (essential for filtering lists):
+        - exists(var, predicate): true if ANY element matches
+        - all(var, predicate): true if ALL elements match
+        - filter(var, predicate): returns list of matching elements
+        - exists_one(var, predicate): true if EXACTLY ONE element matches
+
+        QUERY EXAMPLES:
+
+        Basic filtering:
+        - displayName == "John Smith" → exact name match
+        - familyName == "Smith" → all Smiths
+        - givenName != null && familyName != null → contacts with both names
+
+        List membership:
+        - "john@example.com" in emailAddresses → has specific email
+        - phoneNumbers != [] → has at least one phone number
+        - emailAddresses == [] → contacts without email
+
+        Filtering nested lists (IMPORTANT - use exists/all):
+        - emailAddresses.exists(e, e == "john@gmail.com") → has Gmail
+        - postalAddresses.exists(a, a.city == "San Francisco") → lives in SF
+        - postalAddresses.exists(a, a.state == "CA") → California residents
+        - phoneNumbers.exists(p, p.number == "415") → 415 area code
+        - phoneNumbers.all(p, p.label == "mobile") → all phones are mobile
+
+        Complex queries:
+        - familyName == "Smith" && emailAddresses.exists(e, e == "@gmail.com") → Smiths with Gmail
+        - postalAddresses.exists(a, a.state == "CA") && phoneNumbers != [] → CA contacts with phone
+        - (givenName == "John" || givenName == "Jane") && familyName == "Doe" → John or Jane Doe
+        - emailAddresses != [] && phoneNumbers != [] && postalAddresses != [] → complete contact info
+
+        TIPS:
+        - Use exists() to check if ANY item in a list matches a condition
+        - Use all() to check if EVERY item in a list matches a condition
+        - Use filter() to get a subset of a list, then check its length
+        - Combine conditions with && (and) and || (or)
+        - Use != [] to check if a list is not empty
+        - Access nested fields with dot notation: postalAddresses.exists(a, a.city == "Boston")
+        """
     }
 
     public var inputSchema: JSONSchema {
@@ -31,9 +86,9 @@ public struct ContactsSearchTool: Tool {
 
     public func execute(input: ContactsSearchToolInput) async throws -> ToolResult {
         // Validate input
-        let trimmedQuery = input.query.trimmingCharacters(in: .whitespaces)
-        guard !trimmedQuery.isEmpty else {
-            return ToolResult(content: "Search query cannot be empty", isError: true)
+        let trimmedExpression = input.expression.trimmingCharacters(in: .whitespaces)
+        guard !trimmedExpression.isEmpty else {
+            return ToolResult(content: "Expression cannot be empty", isError: true)
         }
 
         // Check permission
@@ -41,19 +96,19 @@ public struct ContactsSearchTool: Tool {
             return ToolResult(content: errorMessage, isError: true)
         }
 
-        // Perform search
+        // Filter contacts using CEL expression
         do {
-            let results = try await contactsController.searchContacts(
-                query: trimmedQuery,
+            let results = try await contactsController.filterContacts(
+                expression: trimmedExpression,
                 limit: input.resultLimit ?? 10
             )
 
             if results.isEmpty {
-                return ToolResult(content: "No contacts found matching '\(trimmedQuery)'")
+                return ToolResult(content: "No contacts found matching expression: '\(trimmedExpression)'")
             }
 
             // Format text output
-            var output = "Found \(results.count) contact(s) matching '\(trimmedQuery)':\n\n"
+            var output = "Found \(results.count) contact(s) matching expression '\(trimmedExpression)':\n\n"
 
             for (index, result) in results.enumerated() {
                 output += "\(index + 1). \(result.displayName)\n"
@@ -90,35 +145,35 @@ public struct ContactsSearchTool: Tool {
             return ToolResult(content: output, structuredOutput: structuredOutput)
         } catch {
             return ToolResult(
-                content: "Failed to search contacts: \(error.localizedDescription)",
+                content: "Failed to filter contacts: \(error.localizedDescription)",
                 isError: true
             )
         }
     }
 
     public func formatCallSummary(input: ContactsSearchToolInput) -> String {
-        "search contacts for '\(input.query)'"
+        "search contacts with expression '\(input.expression)'"
     }
 }
 
 // MARK: - Input
 
 public struct ContactsSearchToolInput: ToolInput {
-    public let query: String
+    public let expression: String
     public let resultLimit: Int?
 
-    public init(query: String, resultLimit: Int = 10) {
-        self.query = query
-        self.resultLimit = min(resultLimit, 50)  // Cap at 50
+    public init(expression: String, resultLimit: Int = 10) {
+        self.expression = expression
+        self.resultLimit = min(resultLimit, 100)  // Cap at 100
     }
 
     public static var schema: JSONSchema {
         .object(
             properties: [
-                "query": .string(description: "Search query (searches across name, email, phone number, and addresses)"),
-                "resultLimit": .integer(description: "Maximum number of results to return (default: 10, max: 50)")
+                "expression": .string(description: "CEL expression to filter contacts. See tool description for complete syntax, operators, and examples. Use exists() macro for list filtering."),
+                "resultLimit": .integer(description: "Maximum number of results to return (default: 10, max: 100)")
             ],
-            required: ["query"]
+            required: ["expression"]
         )
     }
 }

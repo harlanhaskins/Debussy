@@ -31,10 +31,19 @@ private struct ClaudeClientKey: EnvironmentKey {
     static let defaultValue: ClaudeClient? = nil
 }
 
+private struct UploadingFilesKey: EnvironmentKey {
+    static let defaultValue: Set<String> = []
+}
+
 extension EnvironmentValues {
     var claudeClient: ClaudeClient? {
         get { self[ClaudeClientKey.self] }
         set { self[ClaudeClientKey.self] = newValue }
+    }
+
+    var uploadingFiles: Set<String> {
+        get { self[UploadingFilesKey.self] }
+        set { self[UploadingFilesKey.self] = newValue }
     }
 }
 
@@ -47,6 +56,7 @@ struct ConversationView: View {
     @State var sendingMessageText: String?
     @State var selectedAttachments: [FileAttachment] = []
     @State var showingFilePicker = false
+    @State var showingPhotoPicker = false
     @State var selectedPhotoItems: [PhotosPickerItem] = []
     @State var showingCamera = false
 
@@ -57,6 +67,7 @@ struct ConversationView: View {
                     ForEach(Array(conversation.messages.values)) { message in
                         MessageView(message: message)
                             .environment(\.claudeClient, conversation.client)
+                            .environment(\.uploadingFiles, conversation.uploadingFiles)
                     }
                 }
                 .onAppear {
@@ -97,11 +108,9 @@ struct ConversationView: View {
                 HStack(alignment: .bottom, spacing: 8) {
                     // Attachment menu button
                     Menu {
-                        PhotosPicker(
-                            selection: $selectedPhotoItems,
-                            maxSelectionCount: 10,
-                            matching: .images
-                        ) {
+                        Button {
+                            showingPhotoPicker = true
+                        } label: {
                             Label("Choose from Photos", systemImage: "photo.on.rectangle")
                         }
 
@@ -122,9 +131,10 @@ struct ConversationView: View {
                         Label("Attach", systemImage: "plus")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
+                    .menuOrder(.fixed)
+                    .labelStyle(.iconOnly)
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
-                    .imageScale(.medium)
                     .frame(width: 44, height: 44)
                     .disabled(sendingMessageTask != nil)
 
@@ -180,6 +190,12 @@ struct ConversationView: View {
         ) { result in
             handleFileSelection(result)
         }
+        .photosPicker(
+            isPresented: $showingPhotoPicker,
+            selection: $selectedPhotoItems,
+            maxSelectionCount: 10,
+            matching: .images
+        )
         .onChange(of: selectedPhotoItems) { oldValue, newValue in
             handlePhotoSelection(newValue)
         }
@@ -239,13 +255,81 @@ struct ConversationView: View {
         }
     }
 
+    private func downsampleImageData(_ data: Data, maxDimension: CGFloat = 1000) -> Data? {
+        guard let imageSource = CGImageSourceCreateWithData(data as CFData, nil) else {
+            print("❌ Failed to create image source")
+            return nil
+        }
+
+        // Get original image properties to determine if downsampling is needed
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+              let height = properties[kCGImagePropertyPixelHeight] as? CGFloat else {
+            print("❌ Failed to get image properties")
+            return nil
+        }
+
+        print("📸 Original size: \(width) × \(height)")
+
+        let maxOriginalDimension = max(width, height)
+
+        // If image is already small enough, return original data
+        if maxOriginalDimension <= maxDimension {
+            print("📸 Image already small enough, no downsampling needed")
+            return data
+        }
+
+        // Calculate thumbnail size
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDimension
+        ]
+
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options as CFDictionary) else {
+            print("❌ Failed to create thumbnail")
+            return nil
+        }
+
+        print("📸 Downsampled size: \(thumbnail.width) × \(thumbnail.height)")
+
+        // Convert to JPEG data
+        let mutableData = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(mutableData, UTType.jpeg.identifier as CFString, 1, nil) else {
+            print("❌ Failed to create image destination")
+            return nil
+        }
+
+        let compressionOptions: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: 0.9
+        ]
+        CGImageDestinationAddImage(destination, thumbnail, compressionOptions as CFDictionary)
+
+        guard CGImageDestinationFinalize(destination) else {
+            print("❌ Failed to finalize image destination")
+            return nil
+        }
+
+        print("📸 Downsampled data: \(mutableData.length) bytes")
+        return mutableData as Data
+    }
+
     func handlePhotoSelection(_ items: [PhotosPickerItem]) {
+        print("📸 handlePhotoSelection called with \(items.count) items")
         Task {
             for item in items {
                 do {
+                    print("📸 Loading photo data...")
                     // Load image data
                     guard let data = try await item.loadTransferable(type: Data.self) else {
-                        print("Failed to load photo data")
+                        print("❌ Failed to load photo data")
+                        continue
+                    }
+                    print("📸 Loaded \(data.count) bytes")
+
+                    // Downsample using CGImageSource
+                    guard let downsampledData = downsampleImageData(data) else {
+                        print("❌ Failed to downsample image")
                         continue
                     }
 
@@ -253,19 +337,25 @@ struct ConversationView: View {
                     let tempURL = FileManager.default.temporaryDirectory
                         .appendingPathComponent(UUID().uuidString)
                         .appendingPathExtension("jpg")
-                    try data.write(to: tempURL)
+                    print("📸 Saving to temp: \(tempURL.path)")
+                    try downsampledData.write(to: tempURL)
 
                     // Copy to conversation directory
+                    print("📸 Copying to conversation directory...")
                     let attachment = try await conversation.fileManager.copyFile(
                         from: tempURL,
                         toMessageId: UUID()
                     )
+                    print("📸 Created attachment: \(attachment.path.string)")
+                    print("📸 MIME type: \(attachment.mimeType)")
+                    print("📸 File size: \(attachment.fileSize)")
                     selectedAttachments.append(attachment)
+                    print("📸 Total attachments: \(selectedAttachments.count)")
 
                     // Clean up temp file
                     try? FileManager.default.removeItem(at: tempURL)
                 } catch {
-                    print("Failed to add photo: \(error)")
+                    print("❌ Failed to add photo: \(error)")
                 }
             }
             // Clear selection
@@ -277,9 +367,15 @@ struct ConversationView: View {
     func handleCapturedPhoto(_ image: UIImage) {
         Task {
             do {
-                // Convert to JPEG data
-                guard let data = image.jpegData(compressionQuality: 0.9) else {
+                // Convert to JPEG data first
+                guard let originalData = image.jpegData(compressionQuality: 1.0) else {
                     print("Failed to convert image to JPEG")
+                    return
+                }
+
+                // Downsample using CGImageSource
+                guard let downsampledData = downsampleImageData(originalData) else {
+                    print("❌ Failed to downsample captured photo")
                     return
                 }
 
@@ -287,7 +383,7 @@ struct ConversationView: View {
                 let tempURL = FileManager.default.temporaryDirectory
                     .appendingPathComponent(UUID().uuidString)
                     .appendingPathExtension("jpg")
-                try data.write(to: tempURL)
+                try downsampledData.write(to: tempURL)
 
                 // Copy to conversation directory
                 let attachment = try await conversation.fileManager.copyFile(
@@ -307,14 +403,20 @@ struct ConversationView: View {
     func handleCapturedPhoto(_ image: NSImage) {
         Task {
             do {
-                // Convert to JPEG data
+                // Convert to JPEG data first
                 guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
                     print("Failed to convert image")
                     return
                 }
                 let bitmap = NSBitmapImageRep(cgImage: cgImage)
-                guard let data = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.9]) else {
+                guard let originalData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 1.0]) else {
                     print("Failed to convert image to JPEG")
+                    return
+                }
+
+                // Downsample using CGImageSource
+                guard let downsampledData = downsampleImageData(originalData) else {
+                    print("❌ Failed to downsample captured photo")
                     return
                 }
 
@@ -322,7 +424,7 @@ struct ConversationView: View {
                 let tempURL = FileManager.default.temporaryDirectory
                     .appendingPathComponent(UUID().uuidString)
                     .appendingPathExtension("jpg")
-                try data.write(to: tempURL)
+                try downsampledData.write(to: tempURL)
 
                 // Copy to conversation directory
                 let attachment = try await conversation.fileManager.copyFile(

@@ -241,6 +241,18 @@ struct JavaScriptExecutionDetailContent: View {
 
     var body: some View {
         Group {
+            // Input summary (fallback when decodedInput is unavailable)
+            if decodedInput == nil && !execution.input.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Input")
+                        .font(.headline)
+                    Text(execution.input)
+                        .font(.body)
+                        .fontDesign(.monospaced)
+                        .textSelection(.enabled)
+                }
+            }
+
             // Code section
             if let code = decodedInput?.code {
                 VStack(alignment: .leading, spacing: 8) {
@@ -250,18 +262,6 @@ struct JavaScriptExecutionDetailContent: View {
                     let markdown = "```javascript\n\(code)\n```"
                     StructuredText(markdown: markdown)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-
-            // Input JSON section
-            if let input = decodedInput?.input {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Input JSON")
-                        .font(.headline)
-                    Text(input)
-                        .font(.body)
-                        .fontDesign(.monospaced)
-                        .textSelection(.enabled)
                 }
             }
 
@@ -301,6 +301,18 @@ struct WebCanvasExecutionDetailContent: View {
 
     var body: some View {
         Group {
+            // Input summary (fallback when decodedInput is unavailable)
+            if decodedInput == nil && !execution.input.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Input")
+                        .font(.headline)
+                    Text(execution.input)
+                        .font(.body)
+                        .fontDesign(.monospaced)
+                        .textSelection(.enabled)
+                }
+            }
+
             // Aspect ratio
             if let aspectRatio = decodedInput?.aspectRatio ?? "1:1" as String? {
                 VStack(alignment: .leading, spacing: 4) {
@@ -487,6 +499,18 @@ struct FileToolExecutionDetailContent: View {
 
     var body: some View {
         Group {
+            // Input summary (fallback when decodedInput is unavailable)
+            if execution.decodedInput == nil && !execution.input.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Input")
+                        .font(.headline)
+                    Text(execution.input)
+                        .font(.body)
+                        .fontDesign(.monospaced)
+                        .textSelection(.enabled)
+                }
+            }
+
             // File path
             if let filePath = filePath {
                 VStack(alignment: .leading, spacing: 4) {
@@ -551,8 +575,24 @@ struct FetchExecutionDetailContent: View {
         execution.decodedInput as? FetchToolInput
     }
 
+    var decodedOutput: FetchToolOutput? {
+        execution.decodedOutput as? FetchToolOutput
+    }
+
     var body: some View {
         Group {
+            // Input summary (fallback when decodedInput is unavailable)
+            if decodedInput == nil && !execution.input.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Input")
+                        .font(.headline)
+                    Text(execution.input)
+                        .font(.body)
+                        .fontDesign(.monospaced)
+                        .textSelection(.enabled)
+                }
+            }
+
             // URL
             if let url = decodedInput?.url {
                 VStack(alignment: .leading, spacing: 4) {
@@ -561,6 +601,24 @@ struct FetchExecutionDetailContent: View {
                     Text(url)
                         .font(.body)
                         .textSelection(.enabled)
+                }
+            }
+
+            // Status & Size (if structured output available)
+            if let output = decodedOutput {
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Status")
+                            .font(.headline)
+                        Text("HTTP \(output.statusCode)")
+                            .font(.body)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Size")
+                            .font(.headline)
+                        Text(output.size.formatted(.byteCount(style: .file)))
+                            .font(.body)
+                    }
                 }
             }
 
@@ -579,7 +637,8 @@ struct FetchExecutionDetailContent: View {
                 }
 
                 if execution.isComplete {
-                    Text(execution.output.isEmpty ? "(no output)" : execution.output)
+                    let content = decodedOutput?.content ?? execution.output
+                    Text(content.isEmpty ? "(no output)" : content)
                         .font(.body)
                         .fontDesign(.monospaced)
                         .foregroundStyle(execution.isError ? .red : .primary)
@@ -1077,6 +1136,7 @@ struct FileAttachmentView: View {
     let messageKind: ConversationMessage.Kind
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.displayScale) var displayScale
+    @Environment(\.uploadingFiles) var uploadingFiles
     @State private var showingFullScreen = false
 
     #if canImport(UIKit)
@@ -1105,38 +1165,70 @@ struct FileAttachmentView: View {
         messageKind == .user ? 300 : 400
     }
 
+    var isUploading: Bool {
+        uploadingFiles.contains(attachment.path.string)
+    }
+
     @ViewBuilder
     private var imageView: some View {
         if let image = loadedImage {
             #if canImport(UIKit)
             Image(uiImage: image)
                 .resizable()
-                .aspectRatio(contentMode: .fit)
+                .scaledToFit()
             #elseif canImport(AppKit)
             Image(nsImage: image)
                 .resizable()
-                .aspectRatio(contentMode: .fit)
+                .scaledToFit()
             #endif
         }
     }
 
     var body: some View {
         Group {
-            if isImage, let image = loadedImage {
-                // Image preview
-                imageView
-                    .frame(maxWidth: maxWidth, maxHeight: 300)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            if isUploading {
+                // Uploading spinner
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.secondary.opacity(0.1))
+                    .frame(width: maxWidth, height: isImage ? 200 : 60)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
+                        VStack(spacing: 8) {
+                            ProgressView()
+                            Text("Uploading...")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    .onTapGesture {
-                        showingFullScreen = true
-                    }
-                    .sheet(isPresented: $showingFullScreen) {
-                        ImageFullScreenView(image: image, fileName: attachment.fileName)
-                    }
+            } else if isImage {
+                if let image = loadedImage {
+                    // Image preview
+                    imageView
+                        .frame(maxWidth: maxWidth)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(borderColor, style: StrokeStyle(lineWidth: 1 / displayScale))
+                        }
+                        .onTapGesture {
+                            showingFullScreen = true
+                        }
+                        .sheet(isPresented: $showingFullScreen) {
+                            ImageFullScreenView(image: image, fileName: attachment.fileName)
+                        }
+                } else {
+                    // Loading placeholder
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.secondary.opacity(0.1))
+                        .frame(width: maxWidth, height: 200)
+                        .overlay {
+                            VStack(spacing: 8) {
+                                ProgressView()
+                                Text("Loading image...")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                }
             } else if !isImage {
                 // Document icon
                 HStack(spacing: 12) {
@@ -1175,18 +1267,48 @@ struct FileAttachmentView: View {
 
     #if canImport(UIKit)
     private func loadImage() {
-        guard let data = try? Data(contentsOf: URL(filePath: attachment.path)!),
-              let image = UIImage(data: data) else {
+        print("🖼️ Loading image from: \(attachment.path.string)")
+        print("🖼️ MIME type: \(attachment.mimeType)")
+        print("🖼️ File size: \(attachment.fileSize)")
+
+        let url = URL(filePath: attachment.path)!
+        let fileExists = FileManager.default.fileExists(atPath: attachment.path.string)
+        print("🖼️ File exists: \(fileExists)")
+
+        guard let data = try? Data(contentsOf: url) else {
+            print("❌ Failed to load data from file")
             return
         }
+        print("🖼️ Loaded \(data.count) bytes")
+
+        guard let image = UIImage(data: data) else {
+            print("❌ Failed to create UIImage from data")
+            return
+        }
+        print("✅ Successfully loaded image: \(image.size)")
         loadedImage = image
     }
     #elseif canImport(AppKit)
     private func loadImage() {
-        guard let data = try? Data(contentsOf: URL(filePath: attachment.path)!),
-              let image = NSImage(data: data) else {
+        print("🖼️ Loading image from: \(attachment.path.string)")
+        print("🖼️ MIME type: \(attachment.mimeType)")
+        print("🖼️ File size: \(attachment.fileSize)")
+
+        let url = URL(filePath: attachment.path)!
+        let fileExists = FileManager.default.fileExists(atPath: attachment.path.string)
+        print("🖼️ File exists: \(fileExists)")
+
+        guard let data = try? Data(contentsOf: url) else {
+            print("❌ Failed to load data from file")
             return
         }
+        print("🖼️ Loaded \(data.count) bytes")
+
+        guard let image = NSImage(data: data) else {
+            print("❌ Failed to create NSImage from data")
+            return
+        }
+        print("✅ Successfully loaded image: \(image.size)")
         loadedImage = image
     }
     #endif

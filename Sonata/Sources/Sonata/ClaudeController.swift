@@ -75,7 +75,8 @@ final class ClaudeController {
         workingDirectory: FilePath,
         locationController: LocationController,
         contactsController: ContactsController,
-        subAgentCallback: @escaping SubAgentTool.OutputCallback
+        subAgentCallback: @escaping SubAgentTool.OutputCallback,
+        toolHistoryProvider: @escaping @MainActor () -> [SwiftClaude.ToolExecutionInfo]
     ) -> Tools {
         Tools {
             ReadTool()
@@ -86,8 +87,8 @@ final class ClaudeController {
             GlobTool()
             FetchTool()
             WebSearchTool()
-            JavaScriptTool()
-            WebCanvasTool(workingDirectory: URL(filePath: workingDirectory)!)
+            JavaScriptTool(historyProvider: toolHistoryProvider)
+            WebCanvasTool(workingDirectory: workingDirectory)
             UserLocationTool(locationController: locationController)
             MapSearchTool(locationController: locationController)
             ContactsSearchTool(contactsController: contactsController)
@@ -105,8 +106,8 @@ final class ClaudeController {
             options: ClaudeAgentOptions(
                 systemPrompt: systemPrompt,
                 apiKey: apiKey,
+                workingDirectory: filesDir,
                 model: defaultClaudeModel,
-                workingDirectory: URL(filePath: filesDir)!,
                 compactionEnabled: true,
                 compactionTokenThreshold: 120_000,
                 keepRecentTokens: 50_000
@@ -139,11 +140,17 @@ final class ClaudeController {
             }
         }
 
+        // Create tool history provider for JavaScript tool
+        let toolHistoryProvider: @MainActor () -> [SwiftClaude.ToolExecutionInfo] = {
+            holder.conversation?.toolExecutionHistory() ?? []
+        }
+
         let tools = makeTools(
             workingDirectory: filesDir,
             locationController: locationController,
             contactsController: contactsController,
-            subAgentCallback: subAgentCallback
+            subAgentCallback: subAgentCallback,
+            toolHistoryProvider: toolHistoryProvider
         )
         let client = try await makeClaudeClient(systemPrompt: systemPrompt, filesDir: filesDir, tools: tools)
 

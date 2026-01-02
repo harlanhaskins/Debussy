@@ -10,12 +10,14 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../../SwiftClaude"),
+        .package(path: "../../SwiftCEL"),
         .package(url: "https://github.com/gonzalezreal/textual.git", from: "0.1.0"),
         .package(url: "https://github.com/apple/swift-collections", from: "1.3.0"),
     ],
     targets: [
         .target(name: "Sonata", dependencies: [
             "SwiftClaude",
+            "SwiftCEL",
             .product(name: "Collections", package: "swift-collections"),
             .product(name: "Textual", package: "textual")
         ])

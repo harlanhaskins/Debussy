@@ -8,13 +8,14 @@
 import Foundation
 @preconcurrency import Contacts
 import SwiftUI
+import SwiftCEL
 
 // MARK: - Contacts Controller
 
 /// Manages contacts access and searching for the app
 @MainActor @Observable
 public class ContactsController {
-    private let store = CNContactStore()
+    private nonisolated let store = CNContactStore()
 
     public var authorizationStatus: CNAuthorizationStatus {
         CNContactStore.authorizationStatus(for: .contacts)
@@ -52,6 +53,80 @@ public class ContactsController {
 
     // MARK: - Search
 
+    /// Filter contacts using a CEL expression
+    /// - Parameters:
+    ///   - expression: CEL expression to filter contacts
+    ///   - limit: Maximum number of results to return
+    /// - Returns: Array of matching contacts
+    public func filterContacts(expression: String, limit: Int) async throws -> [ContactResult] {
+        guard isAuthorized else {
+            throw ContactsError.permissionDenied
+        }
+
+        // Parse CEL expression
+        let expr = try Parser.parse(expression)
+
+        // Enumerate ALL contacts once and filter with CEL
+        let matchedContacts = try await enumerateAndFilterContacts(
+            expr: expr,
+            limit: limit
+        )
+
+        return matchedContacts
+    }
+
+    @concurrent
+    private nonisolated func enumerateAndFilterContacts(
+        expr: any Expr,
+        limit: Int
+    ) async throws -> [ContactResult] {
+        let keysToFetch: [CNKeyDescriptor] = [
+            CNContactIdentifierKey as CNKeyDescriptor,
+            CNContactGivenNameKey as CNKeyDescriptor,
+            CNContactFamilyNameKey as CNKeyDescriptor,
+            CNContactPhoneNumbersKey as CNKeyDescriptor,
+            CNContactEmailAddressesKey as CNKeyDescriptor,
+            CNContactPostalAddressesKey as CNKeyDescriptor,
+            CNContactFormatter.descriptorForRequiredKeys(for: .fullName)
+        ]
+
+        var matchedContacts: [ContactResult] = []
+        let fetchRequest = CNContactFetchRequest(keysToFetch: keysToFetch)
+
+        // Create evaluator with default registry
+        let evaluator = Evaluator()
+
+        // Enumerate all contacts once and filter with CEL
+        try store.enumerateContacts(with: fetchRequest) { contact, stop in
+            // Convert to ContactResult
+            let contactResult = Self.convertContact(contact, query: "")
+
+            // Create CEL context with contact fields
+            let contactValue = contactResult.toCELValue()
+            guard let contactMap = contactValue.asMap else { return }
+
+            let context = Context(bindings: contactMap)
+
+            // Evaluate CEL expression
+            do {
+                let result = try evaluator.evaluate(expr, in: context)
+                if result.isTruthy {
+                    matchedContacts.append(contactResult)
+
+                    // Stop if we've reached the limit
+                    if matchedContacts.count >= limit {
+                        stop.pointee = true
+                    }
+                }
+            } catch {
+                // Skip contacts that fail evaluation
+                return
+            }
+        }
+
+        return matchedContacts
+    }
+
     /// Search contacts by query string
     /// - Parameters:
     ///   - query: Search query (searches across name, email, phone)
@@ -69,7 +144,7 @@ public class ContactsController {
         )
 
         // Convert and sort by relevance
-        var results = matchingContacts.map { convertContact($0, query: query) }
+        var results = matchingContacts.map { Self.convertContact($0, query: query) }
 
         // Sort: exact name matches first, then partial, then email/phone matches
         results.sort { lhs, rhs in
@@ -191,7 +266,10 @@ public class ContactsController {
 
     // MARK: - Private Helpers
 
-    private func convertContact(_ contact: CNContact, query: String) -> ContactResult {
+    private static nonisolated func convertContact(
+        _ contact: CNContact,
+        query: String
+    ) -> ContactResult {
         let formatter = CNContactFormatter()
         formatter.style = .fullName
         let displayName = formatter.string(from: contact) ?? "Unknown"
@@ -298,6 +376,62 @@ public struct PostalAddress: Codable, Sendable {
         self.postalCode = postalCode
         self.country = country
         self.formattedAddress = formattedAddress
+    }
+}
+
+// MARK: - CEL Conversion
+
+extension ContactResult {
+    /// Convert contact to a CEL Value for expression evaluation
+    func toCELValue() -> Value {
+        var contact: [String: Value] = [:]
+
+        contact["id"] = .string(id)
+        contact["displayName"] = .string(displayName)
+        contact["givenName"] = givenName.map { .string($0) } ?? .null
+        contact["familyName"] = familyName.map { .string($0) } ?? .null
+
+        // Phone numbers as list of maps
+        let phones: [Value] = phoneNumbers.map { phone in
+            var phoneMap: [String: Value] = ["number": .string(phone.number)]
+            if let label = phone.label {
+                phoneMap["label"] = .string(label)
+            }
+            return .map(phoneMap)
+        }
+        contact["phoneNumbers"] = .list(phones)
+
+        // Email addresses as list of strings
+        contact["emailAddresses"] = .list(emailAddresses.map { .string($0) })
+
+        // Postal addresses as list of maps
+        let addresses: [Value] = postalAddresses.map { address in
+            var addrMap: [String: Value] = [
+                "formattedAddress": .string(address.formattedAddress)
+            ]
+            if let label = address.label {
+                addrMap["label"] = .string(label)
+            }
+            if let street = address.street {
+                addrMap["street"] = .string(street)
+            }
+            if let city = address.city {
+                addrMap["city"] = .string(city)
+            }
+            if let state = address.state {
+                addrMap["state"] = .string(state)
+            }
+            if let postalCode = address.postalCode {
+                addrMap["postalCode"] = .string(postalCode)
+            }
+            if let country = address.country {
+                addrMap["country"] = .string(country)
+            }
+            return .map(addrMap)
+        }
+        contact["postalAddresses"] = .list(addresses)
+
+        return .map(contact)
     }
 }
 
