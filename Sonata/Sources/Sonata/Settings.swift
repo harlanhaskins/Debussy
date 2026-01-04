@@ -13,11 +13,18 @@ struct SettingsView: View {
     @Environment(\.dismiss) var dismiss
     @Binding var apiKey: String
     @Binding var customInstructions: String
+    @Binding var selectedModel: String
     @Binding var mcpServers: [MCPServerConfiguration]
     var onDeleteAllData: () -> Void
 
     @State private var showingAddServer = false
     @State private var showingDeleteConfirmation = false
+
+    private let availableModels = [
+        "claude-sonnet-4-5",
+        "claude-opus-4-5",
+        "claude-haiku-4-5"
+    ]
 
     var body: some View {
         NavigationStack {
@@ -26,6 +33,19 @@ struct SettingsView: View {
                     SecureField("Anthropic API Key", text: $apiKey)
                         .font(.body)
                         .fontDesign(.monospaced)
+                }
+
+                Section {
+                    Picker("Model", selection: $selectedModel) {
+                        ForEach(availableModels, id: \.self) { model in
+                            Text(model).tag(model)
+                        }
+                    }
+                } header: {
+                    Text("Model")
+                } footer: {
+                    Text("Select the Claude model to use for new conversations")
+                        .font(.caption)
                 }
 
                 Section {

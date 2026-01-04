@@ -10,16 +10,30 @@ import SwiftUI
 import Foundation
 import System
 
+@MainActor
+struct AppURLOpener: URLOpener {
+    func open(_ url: URL) async {
+        await UIApplication.shared.open(url)
+    }
+}
+
 @MainActor @Observable
 final class ClaudeController {
     private let apiKey: String
     private let customInstructions: String
+    private let selectedModel: String
     private let mcpManager: MCPManager?
     var conversations = [Conversation]()
 
-    init(apiKey: String, customInstructions: String = "", mcpServers: [MCPServerConfiguration] = []) async {
+    init(
+        apiKey: String,
+        customInstructions: String = "",
+        selectedModel: String = "claude-sonnet-4-5",
+        mcpServers: [MCPServerConfiguration] = []
+    ) async {
         self.apiKey = apiKey
         self.customInstructions = customInstructions
+        self.selectedModel = selectedModel
 
         // Create and start MCP manager if servers are configured
         if !mcpServers.isEmpty {
@@ -87,6 +101,7 @@ final class ClaudeController {
             GlobTool()
             FetchTool()
             WebSearchTool()
+            OpenURLTool(opener: AppURLOpener())
             JavaScriptTool(historyProvider: toolHistoryProvider)
             WebCanvasTool(workingDirectory: workingDirectory)
             UserLocationTool(locationController: locationController)
@@ -107,7 +122,7 @@ final class ClaudeController {
                 systemPrompt: systemPrompt,
                 apiKey: apiKey,
                 workingDirectory: filesDir,
-                model: defaultClaudeModel,
+                model: selectedModel,
                 compactionEnabled: true,
                 compactionTokenThreshold: 120_000,
                 keepRecentTokens: 50_000

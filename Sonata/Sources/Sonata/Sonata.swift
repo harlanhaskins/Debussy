@@ -497,6 +497,7 @@ struct AttachmentPreviewChip: View {
 class SettingsManager {
     private static let apiKeyKey = "anthropic_api_key"
     private static let customInstructionsKey = "custom_instructions"
+    private static let selectedModelKey = "selected_model"
 
     private var mcpServersFilePath: FilePath {
         let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -516,6 +517,12 @@ class SettingsManager {
         }
     }
 
+    var selectedModel: String {
+        didSet {
+            UserDefaults.standard.set(selectedModel, forKey: Self.selectedModelKey)
+        }
+    }
+
     var mcpServers: [MCPServerConfiguration] {
         didSet {
             saveMCPServers()
@@ -525,6 +532,7 @@ class SettingsManager {
     init() {
         self.apiKey = UserDefaults.standard.string(forKey: Self.apiKeyKey) ?? ""
         self.customInstructions = UserDefaults.standard.string(forKey: Self.customInstructionsKey) ?? ""
+        self.selectedModel = UserDefaults.standard.string(forKey: Self.selectedModelKey) ?? "claude-sonnet-4-5"
         self.mcpServers = []
         loadMCPServers()
     }
@@ -557,6 +565,7 @@ class SettingsManager {
         // Clear UserDefaults
         UserDefaults.standard.removeObject(forKey: Self.apiKeyKey)
         UserDefaults.standard.removeObject(forKey: Self.customInstructionsKey)
+        UserDefaults.standard.removeObject(forKey: Self.selectedModelKey)
 
         // Delete MCP servers file
         try? FileManager.default.removeItem(at: URL(filePath: mcpServersFilePath)!)
@@ -569,6 +578,7 @@ class SettingsManager {
         // Reset in-memory state
         apiKey = ""
         customInstructions = ""
+        selectedModel = "claude-sonnet-4-5"
         mcpServers = []
     }
 }
@@ -593,6 +603,7 @@ public struct ContentView: View {
             SettingsView(
                 apiKey: $settingsManager.apiKey,
                 customInstructions: $settingsManager.customInstructions,
+                selectedModel: $settingsManager.selectedModel,
                 mcpServers: $settingsManager.mcpServers
             ) {
                 handleDeleteAllData()
@@ -720,6 +731,7 @@ public struct ContentView: View {
             controller = await ClaudeController(
                 apiKey: settingsManager.apiKey,
                 customInstructions: settingsManager.customInstructions,
+                selectedModel: settingsManager.selectedModel,
                 mcpServers: settingsManager.mcpServers
             )
         }
