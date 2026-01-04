@@ -74,7 +74,13 @@ final class ClaudeController {
 
         # Available Tools
 
-        You have access to file operations (Read, Write, Update, List, Grep, Glob), web access (Fetch, WebSearch), JavaScript execution, HTML canvas rendering (WebCanvas), location services (UserLocation, MapSearch), and SubAgent (for spawning parallel sub-tasks).
+        You have access to file operations (Read, Write, Update, List, Grep, Glob), web access (Fetch, WebSearch), JavaScript execution, HTML canvas rendering (WebCanvas), location services (UserLocation, MapSearch), Contacts search and update (ContactsSearch, AddToContacts), URL opening (OpenURL), and SubAgent (for spawning parallel sub-tasks).
+        
+        # External application requests
+        
+        The user may ask you to perform specific tasks for other applications they may have installed.
+        When this happens, you should try to figure out if you can open the app with a Deep Link
+        or Universal Link in a way that would satisfy the request.
         """
 
         // Add custom instructions if provided
