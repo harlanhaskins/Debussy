@@ -61,6 +61,13 @@ struct MessageView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
+                case .thinking(let thinking):
+                    // Thinking blocks displayed with caption font and secondary style
+                    Text(thinking.thinking)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
                 case .toolExecution(let execution):
                     if execution.name == "WebCanvas", execution.isComplete, !execution.isError {
                         WebCanvasView(execution: execution)

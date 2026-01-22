@@ -20,8 +20,14 @@ struct FileAttachment: Identifiable, Equatable {
 
 // MARK: - Message Content
 
+struct ThinkingContent: Equatable {
+    let thinking: String
+    let signature: String?
+}
+
 enum MessageContent: Identifiable {
     case text(String)
+    case thinking(ThinkingContent)
     case toolExecution(ToolExecution)
     case fileAttachment(FileAttachment)
 
@@ -29,6 +35,8 @@ enum MessageContent: Identifiable {
         switch self {
         case .text(let content):
             return "text_\(content.prefix(50).hashValue)"
+        case .thinking(let content):
+            return "thinking_\(content.thinking.prefix(50).hashValue)"
         case .toolExecution(let execution):
             return "tool_\(execution.id)"
         case .fileAttachment(let attachment):

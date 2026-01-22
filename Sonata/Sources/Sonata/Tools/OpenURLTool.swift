@@ -4,7 +4,6 @@
 
 import Foundation
 import SwiftClaude
-import UIKit
 
 // MARK: - Tool Definition
 

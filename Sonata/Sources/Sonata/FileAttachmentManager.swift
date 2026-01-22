@@ -10,7 +10,7 @@ import System
 import SwiftClaude
 
 /// Manages file attachments for conversations
-actor FileAttachmentManager {
+struct FileAttachmentManager {
     private let conversationDirectory: FilePath
 
     init(conversationDirectory: FilePath) {
@@ -77,7 +77,7 @@ actor FileAttachmentManager {
     /// - Returns: A ContentBlock representing the attachment
     /// - Throws: FileAttachmentError if the file cannot be read
     func createContentBlock(for attachment: FileAttachment) throws -> SwiftClaude.ContentBlock {
-        return try SwiftClaude.FileAttachmentUtilities.createContentBlock(for: attachment.path)
+        return try FileAttachmentUtilities.createContentBlock(for: attachment.path)
     }
 
     // MARK: - Private Helpers

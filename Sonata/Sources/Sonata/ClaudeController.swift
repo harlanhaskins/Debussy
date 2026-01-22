@@ -10,10 +10,20 @@ import SwiftUI
 import Foundation
 import System
 
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
+
 @MainActor
 struct AppURLOpener: URLOpener {
     func open(_ url: URL) async {
+        #if os(macOS)
+        NSWorkspace.shared.open(url)
+        #else
         await UIApplication.shared.open(url)
+        #endif
     }
 }
 
@@ -35,16 +45,14 @@ final class ClaudeController {
         self.customInstructions = customInstructions
         self.selectedModel = selectedModel
 
-        // Create and start MCP manager if servers are configured
+        // Create MCP manager if servers are configured
         if !mcpServers.isEmpty {
             let mcpConfig = MCPConfiguration(mcpServers: Dictionary(
                 uniqueKeysWithValues: mcpServers.map { server in
-                    (server.name, MCPServerConfig(url: server.url))
+                    (server.name, MCPServerConfig(url: server.url, description: server.description))
                 }
             ))
-            let manager = MCPManager(configuration: mcpConfig)
-            await manager.start()
-            self.mcpManager = manager
+            self.mcpManager = MCPManager(configuration: mcpConfig)
         } else {
             self.mcpManager = nil
         }

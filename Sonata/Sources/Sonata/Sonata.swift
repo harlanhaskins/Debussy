@@ -51,7 +51,6 @@ extension EnvironmentValues {
 struct ConversationView: View {
     var conversation: Conversation
     @State var message = ""
-    @State var error: Error?
     @State var sendingMessageTask: Task<Void, Never>?
     @State var sendingMessageText: String?
     @State var selectedAttachments: [FileAttachment] = []
@@ -59,6 +58,7 @@ struct ConversationView: View {
     @State var showingPhotoPicker = false
     @State var selectedPhotoItems: [PhotosPickerItem] = []
     @State var showingCamera = false
+    @Environment(\.presentToast) var presentToast
 
     var body: some View {
         GeometryReader { proxy in
@@ -85,6 +85,10 @@ struct ConversationView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .contentMargins(8, for: .scrollContent)
+            .onDrop(of: [.item], isTargeted: nil) { providers in
+                handleDroppedItems(providers)
+                return true
+            }
         }
         .safeAreaBar(edge: .bottom) {
             VStack(spacing: 8) {
@@ -148,6 +152,10 @@ struct ConversationView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
                         .glassEffect(in: .rect(cornerRadius: 22))
+                        .onDrop(of: [.item], isTargeted: nil) { providers in
+                            handleDroppedItems(providers)
+                            return true
+                        }
 
                     ZStack {
                         if sendingMessageTask == nil {
@@ -210,7 +218,6 @@ struct ConversationView: View {
 
     func sendCurrentMessage() {
         guard !message.isEmpty || !selectedAttachments.isEmpty else { return }
-        error = nil
         let messageText = self.message.isEmpty ? " " : self.message  // Need at least one character for text content
         let attachments = self.selectedAttachments
         self.message = ""
@@ -220,7 +227,7 @@ struct ConversationView: View {
             do {
                 try await conversation.sendMessage(text: messageText, attachments: attachments)
             } catch {
-                self.error = error
+                presentToast(.error("Failed to send message", subtitle: error.localizedDescription))
             }
             self.sendingMessageTask = nil
         }
@@ -234,7 +241,7 @@ struct ConversationView: View {
                     do {
                         // Get security-scoped access
                         guard url.startAccessingSecurityScopedResource() else {
-                            print("Failed to access file: \(url)")
+                            presentToast(.error("Failed to access file", subtitle: url.lastPathComponent))
                             continue
                         }
                         defer { url.stopAccessingSecurityScopedResource() }
@@ -246,12 +253,39 @@ struct ConversationView: View {
                         )
                         selectedAttachments.append(attachment)
                     } catch {
-                        print("Failed to add attachment: \(error)")
+                        presentToast(.error("Failed to attach file", subtitle: error.localizedDescription))
                     }
                 }
             }
         case .failure(let error):
-            print("File selection failed: \(error)")
+            presentToast(.error("File selection failed", subtitle: error.localizedDescription))
+        }
+    }
+
+    func handleDroppedItems(_ providers: [NSItemProvider]) {
+        for provider in providers {
+            // Use loadFileRepresentation which handles marshaling the data to a temporary file
+            provider.loadFileRepresentation(forTypeIdentifier: UTType.item.identifier) { url, error in
+                guard let url = url else {
+                    Task { @MainActor in
+                        self.presentToast(.error("Failed to load file", subtitle: error?.localizedDescription))
+                    }
+                    return
+                }
+                do {
+                    let attachment = try self.conversation.fileManager.copyFile(
+                        from: url,
+                        toMessageId: UUID()
+                    )
+                    Task { @MainActor in
+                        self.selectedAttachments.append(attachment)
+                    }
+                } catch {
+                    Task { @MainActor in
+                        self.presentToast(.error("Failed to attach file", subtitle: error.localizedDescription))
+                    }
+                }
+            }
         }
     }
 
@@ -315,21 +349,18 @@ struct ConversationView: View {
     }
 
     func handlePhotoSelection(_ items: [PhotosPickerItem]) {
-        print("📸 handlePhotoSelection called with \(items.count) items")
         Task {
             for item in items {
                 do {
-                    print("📸 Loading photo data...")
                     // Load image data
                     guard let data = try await item.loadTransferable(type: Data.self) else {
-                        print("❌ Failed to load photo data")
+                        presentToast(.error("Failed to load photo"))
                         continue
                     }
-                    print("📸 Loaded \(data.count) bytes")
 
                     // Downsample using CGImageSource
                     guard let downsampledData = downsampleImageData(data) else {
-                        print("❌ Failed to downsample image")
+                        presentToast(.error("Failed to process image"))
                         continue
                     }
 
@@ -337,25 +368,19 @@ struct ConversationView: View {
                     let tempURL = FileManager.default.temporaryDirectory
                         .appendingPathComponent(UUID().uuidString)
                         .appendingPathExtension("jpg")
-                    print("📸 Saving to temp: \(tempURL.path)")
                     try downsampledData.write(to: tempURL)
 
                     // Copy to conversation directory
-                    print("📸 Copying to conversation directory...")
                     let attachment = try await conversation.fileManager.copyFile(
                         from: tempURL,
                         toMessageId: UUID()
                     )
-                    print("📸 Created attachment: \(attachment.path.string)")
-                    print("📸 MIME type: \(attachment.mimeType)")
-                    print("📸 File size: \(attachment.fileSize)")
                     selectedAttachments.append(attachment)
-                    print("📸 Total attachments: \(selectedAttachments.count)")
 
                     // Clean up temp file
                     try? FileManager.default.removeItem(at: tempURL)
                 } catch {
-                    print("❌ Failed to add photo: \(error)")
+                    presentToast(.error("Failed to add photo", subtitle: error.localizedDescription))
                 }
             }
             // Clear selection
@@ -369,13 +394,13 @@ struct ConversationView: View {
             do {
                 // Convert to JPEG data first
                 guard let originalData = image.jpegData(compressionQuality: 1.0) else {
-                    print("Failed to convert image to JPEG")
+                    presentToast(.error("Failed to convert image"))
                     return
                 }
 
                 // Downsample using CGImageSource
                 guard let downsampledData = downsampleImageData(originalData) else {
-                    print("❌ Failed to downsample captured photo")
+                    presentToast(.error("Failed to process image"))
                     return
                 }
 
@@ -395,7 +420,7 @@ struct ConversationView: View {
                 // Clean up temp file
                 try? FileManager.default.removeItem(at: tempURL)
             } catch {
-                print("Failed to save captured photo: \(error)")
+                presentToast(.error("Failed to save photo", subtitle: error.localizedDescription))
             }
         }
     }
@@ -405,18 +430,18 @@ struct ConversationView: View {
             do {
                 // Convert to JPEG data first
                 guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-                    print("Failed to convert image")
+                    presentToast(.error("Failed to convert image"))
                     return
                 }
                 let bitmap = NSBitmapImageRep(cgImage: cgImage)
                 guard let originalData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 1.0]) else {
-                    print("Failed to convert image to JPEG")
+                    presentToast(.error("Failed to convert image"))
                     return
                 }
 
                 // Downsample using CGImageSource
                 guard let downsampledData = downsampleImageData(originalData) else {
-                    print("❌ Failed to downsample captured photo")
+                    presentToast(.error("Failed to process image"))
                     return
                 }
 
@@ -436,7 +461,7 @@ struct ConversationView: View {
                 // Clean up temp file
                 try? FileManager.default.removeItem(at: tempURL)
             } catch {
-                print("Failed to save captured photo: \(error)")
+                presentToast(.error("Failed to save photo", subtitle: error.localizedDescription))
             }
         }
     }
@@ -599,6 +624,7 @@ public struct ContentView: View {
         } detail: {
             conversationDetail
         }
+        .toaster()
         .sheet(isPresented: $showingSettings) {
             SettingsView(
                 apiKey: $settingsManager.apiKey,

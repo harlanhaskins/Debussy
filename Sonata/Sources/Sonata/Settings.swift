@@ -125,9 +125,14 @@ struct MCPServerRow: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(server.name)
                 .font(.headline)
+            if let description = server.description, !description.isEmpty {
+                Text(description)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
             Text(server.url)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tertiary)
                 .lineLimit(1)
         }
     }
@@ -139,6 +144,10 @@ struct AddMCPServerView: View {
 
     @State private var name = ""
     @State private var url = ""
+    @State private var description = ""
+    @State private var isProbing = false
+    @State private var probeError: String?
+    @State private var serverVersion: String?
 
     var isValid: Bool {
         !name.isEmpty && !url.isEmpty && url.hasPrefix("http")
@@ -148,16 +157,48 @@ struct AddMCPServerView: View {
         NavigationStack {
             Form {
                 Section("Server Details") {
-                    TextField("Name", text: $name)
-                        .autocorrectionDisabled()
-
                     TextField("URL", text: $url)
                         .autocorrectionDisabled()
                         .textContentType(.URL)
+                        .onChange(of: url) { _, newValue in
+                            // Clear probe state when URL changes
+                            probeError = nil
+                            serverVersion = nil
+                        }
+
+                    if isProbing {
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                            Text("Connecting to server...")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if let error = probeError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    } else if let version = serverVersion {
+                        Text("Connected • Version \(version)")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                    } else if url.hasPrefix("http") {
+                        Button("Test Connection") {
+                            Task {
+                                await probeServer()
+                            }
+                        }
+                        .font(.caption)
+                    }
+
+                    TextField("Name", text: $name)
+                        .autocorrectionDisabled()
+
+                    TextField("Description (optional)", text: $description)
                 }
 
                 Section {
-                    Text("Only HTTP/HTTPS URLs are supported")
+                    Text("Only HTTP/HTTPS URLs are supported. Test the connection to auto-fill the server name.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -176,7 +217,8 @@ struct AddMCPServerView: View {
                         servers.append(MCPServerConfiguration(
                             id: UUID(),
                             name: name,
-                            url: url
+                            url: url,
+                            description: description.isEmpty ? nil : description
                         ))
                         dismiss()
                     }
@@ -184,6 +226,25 @@ struct AddMCPServerView: View {
                 }
             }
         }
+    }
+
+    private func probeServer() async {
+        isProbing = true
+        probeError = nil
+        serverVersion = nil
+
+        do {
+            let result = try await MCPManager.probe(url: url)
+            serverVersion = result.version
+            // Auto-fill name if empty
+            if name.isEmpty {
+                name = result.name
+            }
+        } catch {
+            probeError = error.localizedDescription
+        }
+
+        isProbing = false
     }
 }
 
@@ -193,4 +254,5 @@ struct MCPServerConfiguration: Identifiable, Codable, Equatable {
     let id: UUID
     var name: String
     var url: String
+    var description: String?
 }

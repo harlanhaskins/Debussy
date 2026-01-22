@@ -299,7 +299,7 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Debussy/Info.plist;
-				INFOPLIST_KEY_NSContactsUsageDescription = "";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Debussy can search your contacts and add new contacts if you give it permission.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Debussy needs access to your location to provide location-based assistance and answer questions about your current location.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -353,7 +353,7 @@
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Debussy/Info.plist;
-				INFOPLIST_KEY_NSContactsUsageDescription = "";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Debussy can search your contacts and add new contacts if you give it permission.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Debussy needs access to your location to provide location-based assistance and answer questions about your current location.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;

@@ -73,8 +73,14 @@ struct PersistedFileAttachment: Codable {
     }
 }
 
+struct PersistedThinking: Codable {
+    let thinking: String
+    let signature: String?
+}
+
 enum PersistedMessageContent: Codable {
     case text(String)
+    case thinking(PersistedThinking)
     case toolExecution(String) // Tool execution ID
     case fileAttachment(PersistedFileAttachment)
 
@@ -91,6 +97,19 @@ enum PersistedMessageContent: Codable {
         case "text":
             let text = try container.decode(String.self, forKey: .data)
             self = .text(text)
+        case "thinking":
+            // Support both old format (String) and new format (PersistedThinking)
+            if let thinking = try? container.decode(PersistedThinking.self, forKey: .data) {
+                self = .thinking(thinking)
+            } else if let thinkingString = try? container.decode(String.self, forKey: .data) {
+                self = .thinking(PersistedThinking(thinking: thinkingString, signature: nil))
+            } else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .data,
+                    in: container,
+                    debugDescription: "Invalid thinking data"
+                )
+            }
         case "toolExecution":
             let id = try container.decode(String.self, forKey: .data)
             self = .toolExecution(id)
@@ -113,6 +132,9 @@ enum PersistedMessageContent: Codable {
         case .text(let text):
             try container.encode("text", forKey: .type)
             try container.encode(text, forKey: .data)
+        case .thinking(let thinking):
+            try container.encode("thinking", forKey: .type)
+            try container.encode(thinking, forKey: .data)
         case .toolExecution(let id):
             try container.encode("toolExecution", forKey: .type)
             try container.encode(id, forKey: .data)

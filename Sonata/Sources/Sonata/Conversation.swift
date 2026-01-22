@@ -226,18 +226,18 @@ final class Conversation: Identifiable {
         )
 
         // Build SwiftClaude content blocks (for API)
-        let claudeMessage: SwiftClaude.UserMessage
+        let claudeMessage: UserMessage
         if attachments.isEmpty {
             // Simple text message
-            claudeMessage = SwiftClaude.UserMessage(content: text)
+            claudeMessage = UserMessage(content: text)
         } else {
             // Multimodal message with text and attachments
-            var contentBlocks: [SwiftClaude.ContentBlock] = [.text(SwiftClaude.TextBlock(text: text))]
+            var contentBlocks: [ContentBlock] = [.text(SwiftClaude.TextBlock(text: text))]
 
             // Load files and create content blocks
             for attachment in attachments {
                 do {
-                    let contentBlock = try await fileManager.createContentBlock(for: attachment)
+                    let contentBlock = try fileManager.createContentBlock(for: attachment)
                     contentBlocks.append(contentBlock)
                 } catch {
                     print("Error loading attachment \(attachment.fileName): \(error)")
@@ -259,6 +259,9 @@ final class Conversation: Identifiable {
                         switch block {
                         case .text(let textBlock):
                             contentBlocks.append(.text(textBlock.text))
+
+                        case .thinking(let thinkingBlock):
+                            contentBlocks.append(.thinking(ThinkingContent(thinking: thinkingBlock.thinking, signature: thinkingBlock.signature)))
 
                         case .toolUse(let toolBlock):
                             // Create ToolExecution immediately if it doesn't exist
@@ -440,6 +443,9 @@ final class Conversation: Identifiable {
                 case .text(let text):
                     persistedContent.append(.text(text))
 
+                case .thinking(let thinking):
+                    persistedContent.append(.thinking(PersistedThinking(thinking: thinking.thinking, signature: thinking.signature)))
+
                 case .toolExecution(let execution):
                     persistedContent.append(.toolExecution(execution.id))
 
@@ -484,6 +490,9 @@ final class Conversation: Identifiable {
                 switch content {
                 case .text(let text):
                     messageContent.append(.text(text))
+
+                case .thinking(let thinking):
+                    messageContent.append(.thinking(ThinkingContent(thinking: thinking.thinking, signature: thinking.signature)))
 
                 case .toolExecution(let executionId):
                     if let execution = toolExecutions[executionId] {
@@ -618,6 +627,9 @@ final class Conversation: Identifiable {
                     switch block {
                     case .text(let textBlock):
                         contentBlocks.append(.text(textBlock.text))
+
+                    case .thinking(let thinkingBlock):
+                        contentBlocks.append(.thinking(ThinkingContent(thinking: thinkingBlock.thinking, signature: thinkingBlock.signature)))
 
                     case .toolUse(let toolBlock):
                         // Use loaded tool execution if available, otherwise create a new one

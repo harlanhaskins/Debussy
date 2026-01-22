@@ -9,14 +9,14 @@ let package = Package(
         .library(name: "Sonata", targets: ["Sonata"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/harlanhaskins/SwiftClaudeAgent.git", from: "0.1.0"),
+        .package(path: "../../SwiftClaude"),
         .package(url: "https://github.com/harlanhaskins/SwiftCEL.git", from: "0.1.0"),
         .package(url: "https://github.com/gonzalezreal/textual.git", from: "0.1.0"),
         .package(url: "https://github.com/apple/swift-collections", from: "1.3.0"),
     ],
     targets: [
         .target(name: "Sonata", dependencies: [
-            .product(name: "SwiftClaude", package: "SwiftClaudeAgent"),
+            .product(name: "SwiftClaude", package: "SwiftClaude"),
             .product(name: "SwiftCEL", package: "SwiftCEL"),
             .product(name: "Collections", package: "swift-collections"),
             .product(name: "Textual", package: "textual")
